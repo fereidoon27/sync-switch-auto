@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define project directory
-REPO_DIR="/home/amin/git_repos/automated-vm-migration-service"
+REPO_DIR="/home/amin/git_repos/Synchronize_Switch"
 
 # Navigate to the project directory
 cd "$REPO_DIR" || { echo "Directory not found!"; exit 1; }

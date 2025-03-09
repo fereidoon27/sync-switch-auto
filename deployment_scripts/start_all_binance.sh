@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Iterate over directories that start with "van-buren"
-for dir in /home/ubuntu/van-buren*/; do
+for dir in /home/ubuntu/van-buren-rlc-router-binance*/; do
   # Check if the directory exists and is a directory
   if [ -d "$dir" ]; then
     echo "Entering directory: $dir"

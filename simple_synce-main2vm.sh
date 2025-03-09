@@ -77,22 +77,23 @@ done
 # Get VMs for destination datacenter
 DEST_VMS=($(get_vms_for_datacenter "$DEST_DATACENTER"))
 
-# Display VM options for destination
+# Display VM options for destination with "all" as an additional option
 echo "Available VMs in $DEST_DATACENTER datacenter:"
 for i in "${!DEST_VMS[@]}"; do
     echo "$((i+1)). ${DEST_VMS[$i]}"
 done
+echo "$((${#DEST_VMS[@]}+1)). all (select all VMs)"
 
 # Get destination VM(s)
 while true; do
     echo "Enter VM numbers to select multiple VMs (e.g., '246' for VMs 2, 4, and 6)"
-    echo "Or enter 'all' to select all VMs in this datacenter"
-    read -p "Choose destination VM(s) (1-${#DEST_VMS[@]}): " DST_VM_CHOICE
+    read -p "Choose destination VM(s) (1-$((${#DEST_VMS[@]}+1))): " DST_VM_CHOICE
     
     # Initialize array for selected VMs
     SELECTED_VMS=()
     
-    if [[ "$DST_VM_CHOICE" == "all" ]]; then
+    # Check if user selected "all" option
+    if [[ "$DST_VM_CHOICE" == "$((${#DEST_VMS[@]}+1))" ]]; then
         # Select all VMs
         for ((i=0; i<${#DEST_VMS[@]}; i++)); do
             SELECTED_VMS+=("${DEST_VMS[$i]}")
@@ -164,7 +165,7 @@ for DEST_VM in "${SELECTED_VMS[@]}"; do
 
     # Extract VM number for source directory
     VM_NUMBER=$(echo "$DEST_VM" | sed -E 's/^cr([0-9]+).*/\1/')
-    SOURCE_PATH="/home/amin/1111-binance-services/cr$VM_NUMBER"
+    SOURCE_PATH="/home/ubuntu/1111-binance-services/cr$VM_NUMBER"
     DEST_PATH="/home/$DEST_USER"
 
     log "Current VM: $DEST_VM ($DEST_HOST)"

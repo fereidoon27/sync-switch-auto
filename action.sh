@@ -19,6 +19,61 @@ REMOTE_TMP_DIR="/tmp/deployment_scripts"
 # Available services
 SERVICES=("binance" "kucoin" "gateio")
 
+# Default values
+SOURCE_DATACENTER=""
+DEST_DATACENTER=""
+SOURCE_VM_INPUT=""
+MAX_PARALLEL_JOBS=2
+SELECTED_SERVICE=""
+NON_INTERACTIVE=false
+VERBOSE=false
+
+# Parse command-line arguments
+usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo "Options:"
+    echo "  -s SOURCE_DC     Source datacenter name"
+    echo "  -d DEST_DC       Destination datacenter name"
+    echo "  -v VM_NUMBERS    Source VM numbers (comma-separated, e.g., '1,3,5' or 'all')"
+    echo "  -p PARALLEL      Maximum parallel jobs (default: 2)"
+    echo "  -r SERVICE       Service to migrate (binance, kucoin, or gateio)"
+    echo "  -y               Non-interactive mode (skip confirmation prompts)"
+    echo "  -V               Verbose mode"
+    echo "  -h               Display this help message"
+    echo
+    echo "Example: $0 -s arvan -d cloudzy -v all -p 3 -r binance -y"
+    exit 1
+}
+
+while getopts "s:d:v:p:r:yVh" opt; do
+    case $opt in
+        s)
+            SOURCE_DATACENTER="$OPTARG"
+            ;;
+        d)
+            DEST_DATACENTER="$OPTARG"
+            ;;
+        v)
+            SOURCE_VM_INPUT="$OPTARG"
+            ;;
+        p)
+            MAX_PARALLEL_JOBS="$OPTARG"
+            ;;
+        r)
+            SELECTED_SERVICE="$OPTARG"
+            ;;
+        y)
+            NON_INTERACTIVE=true
+            ;;
+        V)
+            VERBOSE=true
+            ;;
+        h|*)
+            usage
+            ;;
+    esac
+done
+
 # Function for logging
 log() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
@@ -390,16 +445,21 @@ process_parallel_jobs() {
                         echo "Migration job #${job_numbers[$j]} failed!"
                         log "Migration job #${job_numbers[$j]} failed!"
                         
-                        read -p "Continue with remaining jobs? (y/n): " continue_choice
-                        if [[ $continue_choice != "y" && $continue_choice != "Y" ]]; then
-                            log "Operation cancelled by user after job #${job_numbers[$j]} failure"
-                            
-                            # Kill all remaining jobs
-                            for pid in "${job_pids[@]}"; do
-                                kill $pid 2>/dev/null
-                            done
-                            
-                            return 1
+                        if [[ "$NON_INTERACTIVE" == "false" ]]; then
+                            read -p "Continue with remaining jobs? (y/n): " continue_choice
+                            if [[ $continue_choice != "y" && $continue_choice != "Y" ]]; then
+                                log "Operation cancelled by user after job #${job_numbers[$j]} failure"
+                                
+                                # Kill all remaining jobs
+                                for pid in "${job_pids[@]}"; do
+                                    kill $pid 2>/dev/null
+                                done
+                                
+                                return 1
+                            fi
+                        else
+                            # In non-interactive mode, continue by default
+                            log "Continuing with remaining jobs after failure (non-interactive mode)"
                         fi
                     fi
                     
@@ -430,6 +490,71 @@ process_parallel_jobs() {
     return 0
 }
 
+# Validate datacenter name
+validate_datacenter() {
+    local dc_name=$1
+    local valid=false
+    
+    for dc in "${DATACENTERS[@]}"; do
+        if [[ "$dc" == "$dc_name" ]]; then
+            valid=true
+            break
+        fi
+    done
+    
+    if [[ "$valid" == "false" ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Validate service name
+validate_service() {
+    local service_name=$1
+    local valid=false
+    
+    for service in "${SERVICES[@]}"; do
+        if [[ "$service" == "$service_name" ]]; then
+            valid=true
+            break
+        fi
+    done
+    
+    if [[ "$valid" == "false" ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Convert comma-separated VM list to digit string
+convert_vm_input() {
+    local input=$1
+    local max_vm=$2
+    local vm_choices=""
+    
+    # Handle 'all' option
+    if [[ "$input" == "all" ]]; then
+        for (( i=1; i<=$max_vm; i++ )); do
+            vm_choices="${vm_choices}${i}"
+        done
+        echo "$vm_choices"
+        return 0
+    fi
+    
+    # Convert comma-separated list to string of digits
+    IFS=',' read -ra VM_ARRAY <<< "$input"
+    for vm in "${VM_ARRAY[@]}"; do
+        # Validate each VM number
+        if [[ ! $vm =~ ^[1-9][0-9]*$ ]] || [[ $vm -gt $max_vm ]]; then
+            echo "error"
+            return 1
+        fi
+        vm_choices="${vm_choices}${vm}"
+    done
+    
+    echo "$vm_choices"
+}
+
 # Main script execution
 main() {
     # Clear log file at the start
@@ -437,115 +562,241 @@ main() {
     
     # Parse servers configuration and get datacenters
     parse_servers_config
-
-    # Display datacenter options
-    echo "Available Datacenters:"
-    for i in "${!DATACENTERS[@]}"; do
-        echo "$((i+1)). ${DATACENTERS[i]}"
-    done
-
-    # Select source datacenter
-    while true; do
-        read -p "Select source datacenter (1-${#DATACENTERS[@]}): " source_dc_choice
-        if [[ $source_dc_choice =~ ^[1-${#DATACENTERS[@]}]$ ]]; then
-            SOURCE_DATACENTER=${DATACENTERS[$((source_dc_choice-1))]}
-            break
-        else
-            echo "Invalid choice. Please try again."
-        fi
-    done
-
-    # Select destination datacenter
-    while true; do
-        read -p "Select destination datacenter (1-${#DATACENTERS[@]}): " dest_dc_choice
-        if [[ $dest_dc_choice =~ ^[1-${#DATACENTERS[@]}]$ ]]; then
-            DEST_DATACENTER=${DATACENTERS[$((dest_dc_choice-1))]}
-            # Ensure destination is different from source
-            if [ "$DEST_DATACENTER" != "$SOURCE_DATACENTER" ]; then
-                break
-            else
-                echo "Destination datacenter must be different from source. Please try again."
-            fi
-        else
-            echo "Invalid choice. Please try again."
-        fi
-    done
-
-    # Get VMs for source datacenter
-    SOURCE_VMS=($(get_datacenter_vms "$SOURCE_DATACENTER"))
-
-    # Display source VM options with "all" option
-    echo "Available Source VMs:"
-    for i in "${!SOURCE_VMS[@]}"; do
-        echo "$((i+1)). ${SOURCE_VMS[i]}"
-    done
-    echo "$((${#SOURCE_VMS[@]}+1)). all"
-
-    # Select source VMs (multiple selection or all)
-    while true; do
-        read -p "Select source VMs (enter digits without spaces, e.g. 614 for VMs 6, 1, and 4, or select 'all'): " source_vm_input
-        
-        # Check if user selected "all"
-        if [[ $source_vm_input =~ ^[aA][lL][lL]$ ]] || [[ $source_vm_input -eq $((${#SOURCE_VMS[@]}+1)) ]]; then
-            # Generate sequence for all VMs: "123456..." up to the number of VMs
-            source_vm_choices=""
-            for (( i=1; i<=${#SOURCE_VMS[@]}; i++ )); do
-                source_vm_choices="${source_vm_choices}${i}"
+    
+    # Verify the required parameters for automated mode
+    auto_mode_valid=true
+    source_dc_index=-1
+    dest_dc_index=-1
+    source_vm_choices=""
+    
+    # Process SOURCE_DATACENTER
+    if [[ -n "$SOURCE_DATACENTER" ]]; then
+        if ! validate_datacenter "$SOURCE_DATACENTER"; then
+            echo "ERROR: Invalid source datacenter: $SOURCE_DATACENTER"
+            echo "Available datacenters:"
+            for dc in "${DATACENTERS[@]}"; do
+                echo "  $dc"
             done
-            break
+            auto_mode_valid=false
+        else
+            # Find the index of the source datacenter
+            for i in "${!DATACENTERS[@]}"; do
+                if [[ "${DATACENTERS[$i]}" == "$SOURCE_DATACENTER" ]]; then
+                    source_dc_index=$i
+                    break
+                fi
+            done
         fi
-        
-        # Validate input - only digits allowed
-        if [[ ! $source_vm_input =~ ^[1-9]+$ ]]; then
-            echo "Invalid input. Please enter only digits corresponding to VM numbers."
-            continue
-        fi
-        
-        # Validate that all digits are valid VM indices
-        local invalid_choice=false
-        for (( i=0; i<${#source_vm_input}; i++ )); do
-            local choice=${source_vm_input:$i:1}
-            if [[ $choice -gt ${#SOURCE_VMS[@]} ]]; then
-                echo "Invalid choice: $choice. Maximum is ${#SOURCE_VMS[@]}."
-                invalid_choice=true
-                break
+    else
+        auto_mode_valid=false
+    fi
+    
+    # Process DEST_DATACENTER
+    if [[ -n "$DEST_DATACENTER" ]]; then
+        if ! validate_datacenter "$DEST_DATACENTER"; then
+            echo "ERROR: Invalid destination datacenter: $DEST_DATACENTER"
+            echo "Available datacenters:"
+            for dc in "${DATACENTERS[@]}"; do
+                echo "  $dc"
+            done
+            auto_mode_valid=false
+        else
+            # Check if source and destination are different
+            if [[ "$SOURCE_DATACENTER" == "$DEST_DATACENTER" ]]; then
+                echo "ERROR: Source and destination datacenters must be different"
+                auto_mode_valid=false
+            else
+                # Find the index of the destination datacenter
+                for i in "${!DATACENTERS[@]}"; do
+                    if [[ "${DATACENTERS[$i]}" == "$DEST_DATACENTER" ]]; then
+                        dest_dc_index=$i
+                        break
+                    fi
+                done
             fi
-        done
-        
-        if [ "$invalid_choice" = true ]; then
-            continue
         fi
+    else
+        auto_mode_valid=false
+    fi
+    
+    # Get VMs for source datacenter if we have a valid source datacenter
+    if [[ $source_dc_index -ge 0 ]]; then
+        SOURCE_VMS=($(get_datacenter_vms "$SOURCE_DATACENTER"))
         
-        source_vm_choices=$source_vm_input
-        break
-    done
+        # Process SOURCE_VM_INPUT if provided
+        if [[ -n "$SOURCE_VM_INPUT" ]]; then
+            # Convert input to digit string
+            source_vm_choices=$(convert_vm_input "$SOURCE_VM_INPUT" "${#SOURCE_VMS[@]}")
+            
+            if [[ "$source_vm_choices" == "error" ]]; then
+                echo "ERROR: Invalid VM numbers: $SOURCE_VM_INPUT"
+                echo "Valid range is 1-${#SOURCE_VMS[@]} or 'all'"
+                auto_mode_valid=false
+            fi
+        else
+            auto_mode_valid=false
+        fi
+    fi
     
-    # Ask for parallel job count
-    read -p "Enter maximum number of parallel jobs [2]: " MAX_PARALLEL_JOBS
-    MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-2}  # Default to 2 if empty
+    # Process SELECTED_SERVICE
+    if [[ -n "$SELECTED_SERVICE" ]]; then
+        if ! validate_service "$SELECTED_SERVICE"; then
+            echo "ERROR: Invalid service: $SELECTED_SERVICE"
+            echo "Available services:"
+            for svc in "${SERVICES[@]}"; do
+                echo "  $svc"
+            done
+            auto_mode_valid=false
+        fi
+    else
+        auto_mode_valid=false
+    fi
     
-    # Validate input for parallel jobs
-    if [[ ! $MAX_PARALLEL_JOBS =~ ^[1-9][0-9]*$ ]]; then
-        echo "Invalid input. Using default value of 2 parallel jobs."
+    # Validate MAX_PARALLEL_JOBS
+    if [[ -n "$MAX_PARALLEL_JOBS" ]]; then
+        if [[ ! $MAX_PARALLEL_JOBS =~ ^[1-9][0-9]*$ ]]; then
+            echo "ERROR: Invalid maximum parallel jobs: $MAX_PARALLEL_JOBS"
+            echo "Must be a positive integer"
+            MAX_PARALLEL_JOBS=2
+            echo "Using default value: $MAX_PARALLEL_JOBS"
+        fi
+    else
         MAX_PARALLEL_JOBS=2
     fi
     
-    # Display service options
-    echo -e "\nAvailable Services:"
-    for i in "${!SERVICES[@]}"; do
-        echo "$((i+1)). ${SERVICES[i]}"
-    done
-    
-    # Select service
-    while true; do
-        read -p "Select service (1-${#SERVICES[@]}): " service_choice
-        if [[ $service_choice =~ ^[1-${#SERVICES[@]}]$ ]]; then
-            SELECTED_SERVICE=${SERVICES[$((service_choice-1))]}
-            break
+    # Interactive mode if not all parameters are valid or provided
+    if [[ "$auto_mode_valid" == "false" ]]; then
+        # Display datacenter options
+        echo "Available Datacenters:"
+        for i in "${!DATACENTERS[@]}"; do
+            echo "$((i+1)). ${DATACENTERS[i]}"
+        done
+
+        # Select source datacenter if not valid from command line
+        if [[ $source_dc_index -lt 0 ]]; then
+            while true; do
+                read -p "Select source datacenter (1-${#DATACENTERS[@]}): " source_dc_choice
+                if [[ $source_dc_choice =~ ^[1-${#DATACENTERS[@]}]$ ]]; then
+                    SOURCE_DATACENTER=${DATACENTERS[$((source_dc_choice-1))]}
+                    break
+                else
+                    echo "Invalid choice. Please try again."
+                fi
+            done
         else
-            echo "Invalid choice. Please try again."
+            echo "Using source datacenter: $SOURCE_DATACENTER"
         fi
-    done
+
+        # Select destination datacenter if not valid from command line
+        if [[ $dest_dc_index -lt 0 ]]; then
+            while true; do
+                read -p "Select destination datacenter (1-${#DATACENTERS[@]}): " dest_dc_choice
+                if [[ $dest_dc_choice =~ ^[1-${#DATACENTERS[@]}]$ ]]; then
+                    DEST_DATACENTER=${DATACENTERS[$((dest_dc_choice-1))]}
+                    # Ensure destination is different from source
+                    if [ "$DEST_DATACENTER" != "$SOURCE_DATACENTER" ]; then
+                        break
+                    else
+                        echo "Destination datacenter must be different from source. Please try again."
+                    fi
+                else
+                    echo "Invalid choice. Please try again."
+                fi
+            done
+        else
+            echo "Using destination datacenter: $DEST_DATACENTER"
+        fi
+
+        # Get VMs for source datacenter if needed
+        if [[ -z "$SOURCE_VMS" ]]; then
+            SOURCE_VMS=($(get_datacenter_vms "$SOURCE_DATACENTER"))
+        fi
+
+        # Display source VM options with "all" option
+        echo "Available Source VMs:"
+        for i in "${!SOURCE_VMS[@]}"; do
+            echo "$((i+1)). ${SOURCE_VMS[i]}"
+        done
+        echo "$((${#SOURCE_VMS[@]}+1)). all"
+
+        # Select source VMs if not valid from command line
+        if [[ -z "$source_vm_choices" ]]; then
+            while true; do
+                read -p "Select source VMs (enter digits without spaces, e.g. 614 for VMs 6, 1, and 4, or select 'all'): " source_vm_input
+                
+                # Check if user selected "all"
+                if [[ $source_vm_input =~ ^[aA][lL][lL]$ ]] || [[ $source_vm_input -eq $((${#SOURCE_VMS[@]}+1)) ]]; then
+                    # Generate sequence for all VMs: "123456..." up to the number of VMs
+                    source_vm_choices=""
+                    for (( i=1; i<=${#SOURCE_VMS[@]}; i++ )); do
+                        source_vm_choices="${source_vm_choices}${i}"
+                    done
+                    break
+                fi
+                
+                # Validate input - only digits allowed
+                if [[ ! $source_vm_input =~ ^[1-9]+$ ]]; then
+                    echo "Invalid input. Please enter only digits corresponding to VM numbers."
+                    continue
+                fi
+                
+                # Validate that all digits are valid VM indices
+                local invalid_choice=false
+                for (( i=0; i<${#source_vm_input}; i++ )); do
+                    local choice=${source_vm_input:$i:1}
+                    if [[ $choice -gt ${#SOURCE_VMS[@]} ]]; then
+                        echo "Invalid choice: $choice. Maximum is ${#SOURCE_VMS[@]}."
+                        invalid_choice=true
+                        break
+                    fi
+                done
+                
+                if [ "$invalid_choice" = true ]; then
+                    continue
+                fi
+                
+                source_vm_choices=$source_vm_input
+                break
+            done
+        else
+            echo "Using source VMs: $(echo $SOURCE_VM_INPUT | tr ',' ' ')"
+        fi
+        
+        # Ask for parallel job count if not provided
+        if [[ -z "$MAX_PARALLEL_JOBS" ]]; then
+            read -p "Enter maximum number of parallel jobs [2]: " MAX_PARALLEL_JOBS
+            MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-2}  # Default to 2 if empty
+            
+            # Validate input for parallel jobs
+            if [[ ! $MAX_PARALLEL_JOBS =~ ^[1-9][0-9]*$ ]]; then
+                echo "Invalid input. Using default value of 2 parallel jobs."
+                MAX_PARALLEL_JOBS=2
+            fi
+        else
+            echo "Using maximum parallel jobs: $MAX_PARALLEL_JOBS"
+        fi
+        
+        # Display service options if not provided
+        if [[ -z "$SELECTED_SERVICE" ]]; then
+            echo -e "\nAvailable Services:"
+            for i in "${!SERVICES[@]}"; do
+                echo "$((i+1)). ${SERVICES[i]}"
+            done
+            
+            # Select service
+            while true; do
+                read -p "Select service (1-${#SERVICES[@]}): " service_choice
+                if [[ $service_choice =~ ^[1-${#SERVICES[@]}]$ ]]; then
+                    SELECTED_SERVICE=${SERVICES[$((service_choice-1))]}
+                    break
+                else
+                    echo "Invalid choice. Please try again."
+                fi
+            done
+        else
+            echo "Using service: $SELECTED_SERVICE"
+        fi
+    fi
 
     # Show configuration summary and get final approval
     echo -e "\nConfiguration Summary:"
@@ -573,10 +824,15 @@ main() {
     echo "Maximum parallel jobs: $MAX_PARALLEL_JOBS"
     echo "Selected service: ${SELECTED_SERVICE^}"
     
-    read -p "Continue? (y/n): " confirm
-    if [[ $confirm != "y" && $confirm != "Y" ]]; then
-        log "Operation cancelled by user"
-        exit 0
+    # Get confirmation in interactive mode
+    if [[ "$NON_INTERACTIVE" == "false" ]]; then
+        read -p "Continue? (y/n): " confirm
+        if [[ $confirm != "y" && $confirm != "Y" ]]; then
+            log "Operation cancelled by user"
+            exit 0
+        fi
+    else
+        echo "Running in non-interactive mode. Proceeding without confirmation..."
     fi
 
     # Process migration jobs in parallel

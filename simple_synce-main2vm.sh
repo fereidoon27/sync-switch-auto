@@ -403,3 +403,4 @@ log "Waiting for all transfers to complete..."
 wait
 
 log "All transfers completed"
+

@@ -98,19 +98,39 @@ while true; do
         4)
             echo "Running Complete Workflow Sequentially..."
 
-            # Run input.sh to gather all necessary inputs if available.
-            if [ -x "./input.sh" ]; then
-                echo "Collecting input..."
-                ./input.sh
-            else
-                echo "Warning: input.sh not found or not executable. Continuing with existing Collected_Input."
-            fi
+            # Loop until the user approves the final Collected_Input
+            while true; do
+                # Run input.sh to gather all necessary inputs if available.
+                if [ -x "./input.sh" ]; then
+                    echo "Collecting input..."
+                    ./input.sh
+                else
+                    echo "Warning: input.sh not found or not executable. Continuing with existing Collected_Input."
+                fi
 
-            # Verify that the Collected_Input file exists.
-            if [ ! -f "$COLLECTED_FILE" ]; then
-                echo "Error: Collected_Input file not found in $INFO_PATH. Aborting workflow."
-                exit 1
-            fi
+                # Verify that the Collected_Input file exists.
+                if [ ! -f "$COLLECTED_FILE" ]; then
+                    echo "Error: Collected_Input file not found in $INFO_PATH. Aborting workflow."
+                    exit 1
+                fi
+
+                # Display the final Collected_Input to the user for approval.
+                #echo "Final Collected Input:"
+                #cat "$COLLECTED_FILE"
+                echo ""
+                read -p "Do you approve the final Collected Input? (Y/n): " approval
+                case "$approval" in
+                    [Yy]*|"")
+                        break
+                        ;;
+                    [Nn]*)
+                        echo "Re-running input.sh..."
+                        ;;
+                    *)
+                        echo "Please answer yes or no."
+                        ;;
+                esac
+            done
 
             # Parse inputs from Collected_Input (new order)
             SELECTED_SERVICES=$(grep "^SELECTED SERVICES:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)

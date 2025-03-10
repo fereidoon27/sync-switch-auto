@@ -25,7 +25,7 @@ DEST_DATACENTER=""
 SOURCE_VM_INPUT=""
 DEST_VM_INPUT=""
 MAX_PARALLEL_JOBS=1
-SELECTED_SERVICE=""
+SELECTED_SERVICES=()
 NON_INTERACTIVE=false
 VERBOSE=false
 
@@ -38,7 +38,7 @@ usage() {
     echo "  -v SRC_VMS       Source VM numbers (comma-separated, e.g., '3,4,5' or 'all')"
     echo "  -D DEST_VMS      Destination VM numbers (comma-separated, e.g., '1,2,6')"
     echo "  -p PARALLEL      Maximum parallel jobs (default: 2)"
-    echo "  -r SERVICE       Service to migrate (binance, kucoin, or gateio)"
+    echo "  -r SERVICES      Services to migrate (comma-separated, e.g., 'binance,kucoin')"
     echo "  -y               Non-interactive mode (skip confirmation prompts)"
     echo "  -V               Verbose mode"
     echo "  -h               Display this help message"
@@ -65,7 +65,7 @@ while getopts "s:d:v:D:p:r:yVh" opt; do
             MAX_PARALLEL_JOBS="$OPTARG"
             ;;
         r)
-            SELECTED_SERVICE="$OPTARG"
+            IFS=',' read -ra SELECTED_SERVICES <<< "$OPTARG"
             ;;
         y)
             NON_INTERACTIVE=true
@@ -222,13 +222,13 @@ close_ssh_connection() {
     log "Closing SSH connection" "$vm_name" "Completed" "SSH Connection"
 }
 
-# Function to copy specific deployment scripts based on selected service
+# Function to copy specific deployment scripts based on selected services
 copy_deployment_scripts() {
     local user=$1
     local host=$2
     local port=$3
     local vm_name=$4
-    local service=$5
+    local services=("${@:5}")
     
     # Create remote tmp directory in one shot
     ssh $SSH_OPTS -p $port $user@$host "mkdir -p $REMOTE_TMP_DIR"
@@ -240,39 +240,42 @@ copy_deployment_scripts() {
     # Copy only the specific service scripts (faster than copying all scripts)
     log "Copying deployment scripts" "$vm_name" "Started" "Copy Scripts"
     
-    # Check if the service scripts exist
-    if [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/deploy_all_${service}.sh" ] || \
-       [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/start_all_${service}.sh" ] || \
-       [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/stop_all_${service}.sh" ] || \
-       [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/purge_all_${service}.sh" ]; then
-        log "Missing required scripts for service $service" "$vm_name" "Failed" "Copy Scripts"
-        return 1
-    fi
-    
-    # Copy service-specific scripts one by one (most reliable approach)
-    scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/deploy_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
-    if [ $? -ne 0 ]; then
-        log "Copy deploy script" "$vm_name" "Failed" "Copy Scripts"
-        return 1
-    fi
-    
-    scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/start_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
-    if [ $? -ne 0 ]; then
-        log "Copy start script" "$vm_name" "Failed" "Copy Scripts"
-        return 1
-    fi
-    
-    scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/stop_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
-    if [ $? -ne 0 ]; then
-        log "Copy stop script" "$vm_name" "Failed" "Copy Scripts"
-        return 1
-    fi
-    
-    scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/purge_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
-    if [ $? -ne 0 ]; then
-        log "Copy purge script" "$vm_name" "Failed" "Copy Scripts"
-        return 1
-    fi
+    # Process each selected service
+    for service in "${services[@]}"; do
+        # Check if the service scripts exist
+        if [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/deploy_all_${service}.sh" ] || \
+           [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/start_all_${service}.sh" ] || \
+           [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/stop_all_${service}.sh" ] || \
+           [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/purge_all_${service}.sh" ]; then
+            log "Missing required scripts for service $service" "$vm_name" "Failed" "Copy Scripts"
+            return 1
+        fi
+        
+        # Copy service-specific scripts one by one
+        scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/deploy_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
+        if [ $? -ne 0 ]; then
+            log "Copy deploy script for $service" "$vm_name" "Failed" "Copy Scripts"
+            return 1
+        fi
+        
+        scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/start_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
+        if [ $? -ne 0 ]; then
+            log "Copy start script for $service" "$vm_name" "Failed" "Copy Scripts"
+            return 1
+        fi
+        
+        scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/stop_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
+        if [ $? -ne 0 ]; then
+            log "Copy stop script for $service" "$vm_name" "Failed" "Copy Scripts"
+            return 1
+        fi
+        
+        scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/purge_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
+        if [ $? -ne 0 ]; then
+            log "Copy purge script for $service" "$vm_name" "Failed" "Copy Scripts"
+            return 1
+        fi
+    done
     
     # Make scripts executable
     ssh $SSH_OPTS -p $port $user@$host "chmod +x $REMOTE_TMP_DIR/*.sh"
@@ -340,8 +343,8 @@ process_migration_job() {
     local dest_datacenter=$3
     local source_vm_index=$4
     local dest_vm_index=$5
-    local service=$6
-    local source_vms=("${@:7}")
+    local services=("${@:6:${#SELECTED_SERVICES[@]}}")
+    local source_vms=("${@:6+${#SELECTED_SERVICES[@]}}")
     
     # Log job header
     log_header "Service Transfer Operation - Job $job_number"
@@ -385,39 +388,46 @@ process_migration_job() {
     setup_ssh_connection "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_VM"
     setup_ssh_connection "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_VM"
     
-    # Copy service-specific deployment scripts to both servers
-    copy_deployment_scripts "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_VM" "$service"
-    copy_deployment_scripts "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_VM" "$service"
-    
-    # Execute actions on destination VM (deploy and start)
-    echo -e "\nExecuting actions on Destination VM ($DEST_VM)..."
-    local dest_success=true
-    for action in 1 2; do
-        echo -e "Executing step $action on Destination VM (${service^} service)"
-        if ! execute_action $action "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_PATH" "$DEST_VM" "$service"; then
-            echo "Sequence failed at step $action on Destination VM"
-            dest_success=false
-            break
-        fi
-    done
-    
-    # Only continue to source VM actions if destination was successful
-    if $dest_success; then
-        # 10-second pause between destination and source actions
-        echo "Pausing for 10 seconds before proceeding to source VM actions..."
-        sleep 10
+    # Copy deployment scripts for all selected services to both servers
+    copy_deployment_scripts "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_VM" "${services[@]}"
+    copy_deployment_scripts "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_VM" "${services[@]}"
+
+    # Process each service
+    local all_success=true
+    for service in "${services[@]}"; do
+        echo -e "\nProcessing service: ${service^}"
         
-        # Execute actions on source VM (stop and purge)
-        echo -e "\nExecuting actions on Source VM ($SOURCE_VM)..."
-        for action in 3 4; do
-            echo -e "Executing step $action on Source VM (${service^} service)"
-            if ! execute_action $action "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_PATH" "$SOURCE_VM" "$service"; then
-                echo "Sequence failed at step $action on Source VM"
+        # Execute actions on destination VM (deploy and start)
+        echo -e "Executing actions on Destination VM ($DEST_VM)..."
+        local dest_success=true
+        for action in 1 2; do
+            echo -e "Executing step $action on Destination VM (${service^} service)"
+            if ! execute_action $action "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_PATH" "$DEST_VM" "$service"; then
+                echo "Sequence failed at step $action on Destination VM"
                 dest_success=false
+                all_success=false
                 break
             fi
         done
-    fi
+        
+        # Only continue to source VM actions if destination was successful
+        if $dest_success; then
+            # 5-second pause between destination and source actions
+            echo "Pausing for 5 seconds before proceeding to source VM actions..."
+            sleep 5
+            
+            # Execute actions on source VM (stop and purge)
+            echo -e "Executing actions on Source VM ($SOURCE_VM)..."
+            for action in 3 4; do
+                echo -e "Executing step $action on Source VM (${service^} service)"
+                if ! execute_action $action "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_PATH" "$SOURCE_VM" "$service"; then
+                    echo "Sequence failed at step $action on Source VM"
+                    all_success=false
+                    break
+                fi
+            done
+        fi
+    done
     
     # Close SSH connections
     close_ssh_connection "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_VM"
@@ -438,7 +448,6 @@ process_parallel_jobs() {
     local dest_datacenter=$2
     local source_vm_choices=$3
     local dest_vm_choices=$4
-    local service=$5
     local max_parallel_jobs=${MAX_PARALLEL_JOBS:-2}
     
     local active_jobs=0
@@ -460,7 +469,7 @@ process_parallel_jobs() {
         echo "======================================================="
         
         # Run the job in background
-        (process_migration_job "$job_number" "$source_datacenter" "$dest_datacenter" "$src_vm_index" "$dst_vm_index" "$service" "${SOURCE_VMS[@]}") &
+        (process_migration_job "$job_number" "$source_datacenter" "$dest_datacenter" "$src_vm_index" "$dst_vm_index" "${SELECTED_SERVICES[@]}" "${SOURCE_VMS[@]}") &
         local pid=$!
         job_pids+=($pid)
         job_numbers+=($job_number)
@@ -693,14 +702,22 @@ main() {
         auto_mode_valid=false
     fi
     
-    # Process SELECTED_SERVICE
-    if [[ -n "$SELECTED_SERVICE" ]]; then
-        if ! validate_service "$SELECTED_SERVICE"; then
-            echo "ERROR: Invalid service: $SELECTED_SERVICE"
-            echo "Available services:"
-            for svc in "${SERVICES[@]}"; do
-                echo "  $svc"
-            done
+    # Process SELECTED_SERVICES
+    if [[ ${#SELECTED_SERVICES[@]} -gt 0 ]]; then
+        for service in "${SELECTED_SERVICES[@]}"; do
+            if ! validate_service "$service"; then
+                echo "ERROR: Invalid service: $service"
+                echo "Available services:"
+                for svc in "${SERVICES[@]}"; do
+                    echo "  $svc"
+                done
+                auto_mode_valid=false
+                break
+            fi
+        done
+        
+        # If no services were specified, consider it invalid
+        if [[ ${#SELECTED_SERVICES[@]} -eq 0 ]]; then
             auto_mode_valid=false
         fi
     else
@@ -891,24 +908,50 @@ main() {
         fi
         
         # Display service options if not provided
-        if [[ -z "$SELECTED_SERVICE" ]]; then
+        if [[ ${#SELECTED_SERVICES[@]} -eq 0 ]]; then
             echo -e "\nAvailable Services:"
             for i in "${!SERVICES[@]}"; do
                 echo "$((i+1)). ${SERVICES[i]}"
             done
+            echo "$((${#SERVICES[@]}+1)). all"
             
-            # Select service
+            # Select services
             while true; do
-                read -p "Select service (1-${#SERVICES[@]}): " service_choice
-                if [[ $service_choice =~ ^[1-${#SERVICES[@]}]$ ]]; then
-                    SELECTED_SERVICE=${SERVICES[$((service_choice-1))]}
+                read -p "Select services (digits without spaces, e.g. 12 for services 1 and 2, or select 'all'): " service_choice
+                
+                # Check if user selected "all"
+                if [[ $service_choice =~ ^[aA][lL][lL]$ ]] || [[ $service_choice -eq $((${#SERVICES[@]}+1)) ]]; then
+                    SELECTED_SERVICES=("${SERVICES[@]}")
                     break
-                else
-                    echo "Invalid choice. Please try again."
                 fi
+                
+                # Validate input - only digits allowed
+                if [[ ! $service_choice =~ ^[1-9]+$ ]]; then
+                    echo "Invalid input. Please enter only digits corresponding to service numbers."
+                    continue
+                fi
+                
+                # Validate and collect selected services
+                SELECTED_SERVICES=()
+                local invalid_choice=false
+                for (( i=0; i<${#service_choice}; i++ )); do
+                    local choice=${service_choice:$i:1}
+                    if [[ $choice -gt ${#SERVICES[@]} ]]; then
+                        echo "Invalid choice: $choice. Maximum is ${#SERVICES[@]}."
+                        invalid_choice=true
+                        break
+                    fi
+                    SELECTED_SERVICES+=("${SERVICES[$((choice-1))]}")
+                done
+                
+                if [ "$invalid_choice" = true ]; then
+                    continue
+                fi
+                
+                break
             done
         else
-            echo "Using service: $SELECTED_SERVICE"
+            echo "Using services: ${SELECTED_SERVICES[*]}"
         fi
     fi
 
@@ -917,7 +960,7 @@ main() {
     echo "Source datacenter: $SOURCE_DATACENTER"
     echo "Destination datacenter: $DEST_DATACENTER"
     echo "Maximum parallel jobs: $MAX_PARALLEL_JOBS"
-    echo "Selected service: ${SELECTED_SERVICE^}"
+    echo "Selected services: ${SELECTED_SERVICES[*]^}"
     echo -e "\nVM Mappings:"
     
     for (( i=0; i<${#source_vm_choices}; i++ )); do
@@ -941,7 +984,7 @@ main() {
     fi
 
     # Process migration jobs in parallel
-    process_parallel_jobs "$SOURCE_DATACENTER" "$DEST_DATACENTER" "$source_vm_choices" "$dest_vm_choices" "$SELECTED_SERVICE"
+    process_parallel_jobs "$SOURCE_DATACENTER" "$DEST_DATACENTER" "$source_vm_choices" "$dest_vm_choices"
 
     # Log completion
     log_header "All Service Transfer Operations Completed"

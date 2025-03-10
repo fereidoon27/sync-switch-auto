@@ -229,8 +229,8 @@ DEST_ENV_FILE="hermes-env.sh"
 # Prepare temporary files for the environments
 TEMP_DIR=$(mktemp -d)
 mkdir -p "$TEMP_DIR/internal" "$TEMP_DIR/external"
-cp "/home/amin/ansible/env/envs" "$TEMP_DIR/internal/envs"
-cp "/home/amin/ansible/env/newpin/envs" "$TEMP_DIR/external/envs"
+cp "/home/ubuntu/ansible/env/envs" "$TEMP_DIR/internal/envs"
+cp "/home/ubuntu/ansible/env/newpin/envs" "$TEMP_DIR/external/envs"
 
 # Prepare the environment files
 for env_file in "$TEMP_DIR/internal/envs" "$TEMP_DIR/external/envs"; do

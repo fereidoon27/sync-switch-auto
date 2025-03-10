@@ -7,6 +7,10 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 RESET='\033[0m'
 
+# Define the Info directory (assuming it is in the same folder as main.sh)
+INFO_PATH="$(dirname "$0")/Info"
+COLLECTED_FILE="$INFO_PATH/Collected_Input"
+
 while true; do
 
     echo -e "${CYAN}========================================${RESET}"
@@ -25,8 +29,9 @@ while true; do
     echo -e "   - ${CYAN}Execute sequential actions (deploy, start, stop, purge) on remote VMs for a selected service.${RESET}"
     echo ""
 
-    echo -e "${GREEN}4: Run Full Workflow Sequentially${RESET}"
-    echo -e "   - ${CYAN}Execute synchronization, then update environment settings, and finally perform service migration.${RESET}"
+    echo -e "${GREEN}4: Run Complete Workflow Sequentially${RESET}"
+    echo -e "   - ${CYAN}First gather all required inputs (via input.sh), then sequentially execute file synchronization,"
+    echo -e "     environment update, and service migration using the collected parameters.${RESET}"
     echo ""
 
     echo -e "${RED}0: Exit - Terminate the main script.${RESET}"
@@ -49,13 +54,69 @@ while true; do
             ./action.sh
             ;;
         4)
-            echo "Running Full Workflow Sequentially..."
-            echo "Step 1: Synchronizing files..."
-            ./simple_synce-main2vm.sh
-            echo "Step 2: Updating Environment and Editing EDN..."
-            ./edit_edn_base_on_ip.sh
+            echo "Running Complete Workflow Sequentially..."
+
+            # First, run input.sh to gather all necessary inputs.
+            if [ -x "./input.sh" ]; then
+                echo "Collecting input..."
+                ./input.sh
+            else
+                echo "Warning: input.sh not found or not executable. Continuing with existing Collected_Input."
+            fi
+
+            # Verify that the Collected_Input file exists.
+            if [ ! -f "$COLLECTED_FILE" ]; then
+                echo "Error: Collected_Input file not found in $INFO_PATH. Aborting workflow."
+                exit 1
+            fi
+
+            # Parse the Collected_Input file for necessary values.
+            SOURCE_DC=$(grep "^SOURCE_DATACENTER:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
+            DEST_DC=$(grep "^DEST_DATACENTER:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
+            MAX_PARALLEL_JOBS=$(grep "^MAX_PARALLEL_JOBS:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
+            SELECTED_SERVICE=$(grep "^SELECTED_SERVICE:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
+
+            # Function to parse VM list from Collected_Input section.
+            parse_vm_list() {
+                local section_header="$1"
+                local stop_pattern="$2"
+                local vm_list_raw
+                vm_list_raw=$(awk -v header="$section_header" -v stop="$stop_pattern" '
+                    $0 ~ header {flag=1; next}
+                    $0 ~ stop {flag=0}
+                    flag { if($0 ~ /-/) print $0 }
+                ' "$COLLECTED_FILE")
+                local vm_numbers=()
+                while IFS= read -r line; do
+                    # Extract the number from a line like "  - cr3arvan"
+                    num=$(echo "$line" | sed -E 's/.*cr([0-9]+).*/\1/')
+                    vm_numbers+=("$num")
+                done <<< "$vm_list_raw"
+                # Join the numbers with commas.
+                IFS=, ; echo "${vm_numbers[*]}" ; IFS=' '
+            }
+
+            # Parse the selected VM numbers for source and destination.
+            SOURCE_VM_ARG=$(parse_vm_list "Selected SOURCE VMs:" "DEST_DATACENTER:")
+            DEST_VM_ARG=$(parse_vm_list "Selected DEST VMs:" "MAX_PARALLEL_JOBS:")
+
+            echo "Collected inputs:"
+            echo "  SOURCE_DATACENTER: $SOURCE_DC"
+            echo "  DEST_DATACENTER: $DEST_DC"
+            echo "  Selected SOURCE VMs (indices): $SOURCE_VM_ARG"
+            echo "  Selected DEST VMs (indices): $DEST_VM_ARG"
+            echo "  MAX_PARALLEL_JOBS: $MAX_PARALLEL_JOBS"
+            echo "  SELECTED_SERVICE: $SELECTED_SERVICE"
+
+            # Now run the scripts sequentially with the constructed parameters.
+            echo "Step 1: Running Synchronization..."
+            ./simple_synce-main2vm.sh -d "$DEST_DC" -v "$DEST_VM_ARG" -j "$MAX_PARALLEL_JOBS" -y
+
+            echo "Step 2: Updating Environment & Editing EDN..."
+            ./edit_edn_base_on_ip.sh --datacenter "$DEST_DC" --servers "$DEST_VM_ARG"
+
             echo "Step 3: Executing Service Switch..."
-            ./action.sh
+            ./action.sh -s "$SOURCE_DC" -d "$DEST_DC" -v "$SOURCE_VM_ARG" -p "$MAX_PARALLEL_JOBS" -r "$SELECTED_SERVICE" -y
             ;;
         0)
             echo "Exiting Main Script. Goodbye!"

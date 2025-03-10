@@ -1,6 +1,5 @@
 #!/bin/bash
-# input.sh: Integrated input script with colorful, attractive menus.
-# The collected input is also saved in Collected_Input.txt.
+# input.sh: Integrated input script with colorful menus and saving plain text output
 
 #--------------------------------------------------
 # Color Definitions
@@ -103,7 +102,7 @@ get_action_input() {
         fi
     done
 
-    # Prompt for DESTINATION_DATACENTER (must be different from source)
+    # Prompt for DESTINATION_DATACENTER
     while true; do
         read -p "$(echo -e ${BLUE}"Select DESTINATION datacenter (1-${#DATACENTERS[@]}): "${RESET})" dst_choice
         if [[ "$dst_choice" =~ ^[0-9]+$ ]] && [ "$dst_choice" -ge 1 ] && [ "$dst_choice" -le "${#DATACENTERS[@]}" ]; then
@@ -185,21 +184,39 @@ get_action_input() {
 #--------------------------------------------------
 get_action_input
 
-# Save and display the collected input in a colorful format,
-# while also writing it to Collected_Input.txt.
+# Display the collected input on screen (colorful)
+echo -e "\n${PURPLE}${BOLD}================== Collected Input ==================${RESET}"
+echo -e "${YELLOW}SOURCE_DATACENTER:${RESET} $SOURCE_DATACENTER"
+echo -e "${YELLOW}Selected SOURCE VMs:${RESET}"
+for vm in "${SELECTED_SOURCE_VMS[@]}"; do
+    echo -e "  - $vm"
+done
+echo -e "${YELLOW}DEST_DATACENTER:${RESET} $DEST_DATACENTER"
+echo -e "${YELLOW}Selected DEST VMs:${RESET}"
+for vm in "${SELECTED_DEST_VMS[@]}"; do
+    echo -e "  - $vm"
+done
+echo -e "${YELLOW}MAX_PARALLEL_JOBS:${RESET} $MAX_PARALLEL_JOBS"
+echo -e "${YELLOW}SELECTED_SERVICE:${RESET} $SELECTED_SERVICE"
+echo -e "${PURPLE}${BOLD}=====================================================${RESET}"
+
+#--------------------------------------------------
+# Save Plain Text Output to Collected_Input File
+#--------------------------------------------------
+OUTPUT_FILE="${INFO_PATH}/Collected_Input"
 {
-    echo -e "\n${PURPLE}${BOLD}================== Collected Input ==================${RESET}"
-    echo -e "${YELLOW}SOURCE_DATACENTER:${RESET} $SOURCE_DATACENTER"
-    echo -e "${YELLOW}Selected SOURCE VMs:${RESET}"
+    echo "SOURCE_DATACENTER: $SOURCE_DATACENTER"
+    echo "Selected SOURCE VMs:"
     for vm in "${SELECTED_SOURCE_VMS[@]}"; do
-        echo -e "  - $vm"
+        echo "  - $vm"
     done
-    echo -e "${YELLOW}DEST_DATACENTER:${RESET} $DEST_DATACENTER"
-    echo -e "${YELLOW}Selected DEST VMs:${RESET}"
+    echo "DEST_DATACENTER: $DEST_DATACENTER"
+    echo "Selected DEST VMs:"
     for vm in "${SELECTED_DEST_VMS[@]}"; do
-        echo -e "  - $vm"
+        echo "  - $vm"
     done
-    echo -e "${YELLOW}MAX_PARALLEL_JOBS:${RESET} $MAX_PARALLEL_JOBS"
-    echo -e "${YELLOW}SELECTED_SERVICE:${RESET} $SELECTED_SERVICE"
-    echo -e "${PURPLE}${BOLD}=====================================================${RESET}"
-} | tee $INFO_PATH/Collected_Input.txt
+    echo "MAX_PARALLEL_JOBS: $MAX_PARALLEL_JOBS"
+    echo "SELECTED_SERVICE: $SELECTED_SERVICE"
+} > "$OUTPUT_FILE"
+
+echo -e "\n${GREEN}Collected input saved to:${RESET} $OUTPUT_FILE"

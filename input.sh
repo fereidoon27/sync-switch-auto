@@ -28,7 +28,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 INFO_PATH="${SCRIPT_DIR}/Info"
 SERVERS_CONF="${INFO_PATH}/servers.conf"
 
-MAX_PARALLEL_JOBS=4
+MAX_PARALLEL_JOBS=1
 SERVICES=("binance" "kucoin" "gateio")
 
 #--------------------------------------------------

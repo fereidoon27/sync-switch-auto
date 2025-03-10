@@ -1,8 +1,8 @@
 SELECTED SERVICES: binance
-SOURCE_DATACENTER: cloudzy
+SOURCE_DATACENTER: arvan
 Selected SOURCE VMs:
-  - cr7cloudzy
-DEST_DATACENTER: arvan
-Selected DEST VMs:
   - cr7arvan
+DEST_DATACENTER: cloudzy
+Selected DEST VMs:
+  - cr7cloudzy
 MAX_PARALLEL_JOBS: 1

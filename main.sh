@@ -138,7 +138,7 @@ while true; do
             ./edit_edn_base_on_ip.sh --datacenter "$DEST_DC" --servers "$DEST_VM_ARG"
 
             echo "Step 3: Executing Service Switch..."
-            ./action.sh -s "$SOURCE_DC" -d "$DEST_DC" -v "$SOURCE_VM_ARG" -p "$MAX_PARALLEL_JOBS" -r "$SELECTED_SERVICE" -y
+            ./action.sh -s "$SOURCE_DC" -d "$DEST_DC" -v "$SOURCE_VM_ARG" -D "$DEST_VM_ARG" -p "$MAX_PARALLEL_JOBS" -r "$SELECTED_SERVICE" -y
             ;;
         0)
             echo "Exiting Main Script. Goodbye!"

@@ -23,7 +23,8 @@ SERVICES=("binance" "kucoin" "gateio")
 SOURCE_DATACENTER=""
 DEST_DATACENTER=""
 SOURCE_VM_INPUT=""
-MAX_PARALLEL_JOBS=2
+DEST_VM_INPUT=""
+MAX_PARALLEL_JOBS=1
 SELECTED_SERVICE=""
 NON_INTERACTIVE=false
 VERBOSE=false
@@ -34,18 +35,19 @@ usage() {
     echo "Options:"
     echo "  -s SOURCE_DC     Source datacenter name"
     echo "  -d DEST_DC       Destination datacenter name"
-    echo "  -v VM_NUMBERS    Source VM numbers (comma-separated, e.g., '1,3,5' or 'all')"
+    echo "  -v SRC_VMS       Source VM numbers (comma-separated, e.g., '3,4,5' or 'all')"
+    echo "  -D DEST_VMS      Destination VM numbers (comma-separated, e.g., '1,2,6')"
     echo "  -p PARALLEL      Maximum parallel jobs (default: 2)"
     echo "  -r SERVICE       Service to migrate (binance, kucoin, or gateio)"
     echo "  -y               Non-interactive mode (skip confirmation prompts)"
     echo "  -V               Verbose mode"
     echo "  -h               Display this help message"
     echo
-    echo "Example: $0 -s arvan -d cloudzy -v all -p 3 -r binance -y"
+    echo "Example: $0 -s arvan -d cloudzy -v 345 -D 126 -p 3 -r binance -y"
     exit 1
 }
 
-while getopts "s:d:v:p:r:yVh" opt; do
+while getopts "s:d:v:D:p:r:yVh" opt; do
     case $opt in
         s)
             SOURCE_DATACENTER="$OPTARG"
@@ -55,6 +57,9 @@ while getopts "s:d:v:p:r:yVh" opt; do
             ;;
         v)
             SOURCE_VM_INPUT="$OPTARG"
+            ;;
+        D)
+            DEST_VM_INPUT="$OPTARG"
             ;;
         p)
             MAX_PARALLEL_JOBS="$OPTARG"
@@ -119,6 +124,34 @@ log_header() {
     echo "$header" | tee -a "$ACTION_LOG"
     echo "$line" | tee -a "$ACTION_LOG"
     echo "" | tee -a "$ACTION_LOG"
+}
+# Convert comma-separated VM list to digit string
+parse_vm_args() {
+    local input=$1
+    local max_vm=$2
+    local vm_choices=""
+    
+    # Handle 'all' option
+    if [[ "$input" == "all" ]]; then
+        for (( i=1; i<=$max_vm; i++ )); do
+            vm_choices="${vm_choices}${i}"
+        done
+        echo "$vm_choices"
+        return 0
+    fi
+    
+    # Convert comma-separated list to string of digits
+    IFS=',' read -ra VM_ARRAY <<< "$input"
+    for vm in "${VM_ARRAY[@]}"; do
+        # Validate each VM number
+        if [[ ! $vm =~ ^[1-9][0-9]*$ ]] || [[ $vm -gt $max_vm ]]; then
+            echo "error"
+            return 1
+        fi
+        vm_choices="${vm_choices}${vm}"
+    done
+    
+    echo "$vm_choices"
 }
 
 # Function to parse servers configuration
@@ -306,8 +339,9 @@ process_migration_job() {
     local source_datacenter=$2
     local dest_datacenter=$3
     local source_vm_index=$4
-    local service=$5
-    local source_vms=("${@:6}")
+    local dest_vm_index=$5
+    local service=$6
+    local source_vms=("${@:7}")
     
     # Log job header
     log_header "Service Transfer Operation - Job $job_number"
@@ -327,9 +361,8 @@ process_migration_job() {
     SOURCE_PORT=$PORT
     SOURCE_PATH="/home/$USERNAME/"
     
-    # Generate destination VM name by replacing the datacenter name in the VM name
-    local source_vm_number=$(echo "$SOURCE_VM" | sed "s/.*\([0-9]\+\).*/\1/")
-    DEST_VM="cr${source_vm_number}${dest_datacenter}"
+    # Get the destination VM name from DEST_VMS array
+    DEST_VM=${DEST_VMS[$dest_vm_index]}
     
     # Get destination VM details
     if ! get_server_details "$dest_datacenter" "$DEST_VM"; then
@@ -404,26 +437,30 @@ process_parallel_jobs() {
     local source_datacenter=$1
     local dest_datacenter=$2
     local source_vm_choices=$3
-    local service=$4
-    local source_vms=("${@:5}")
-    local max_parallel_jobs=${MAX_PARALLEL_JOBS:-2}  # Default to 2 parallel jobs
+    local dest_vm_choices=$4
+    local service=$5
+    local max_parallel_jobs=${MAX_PARALLEL_JOBS:-2}
     
     local active_jobs=0
     local job_pids=()
     local job_numbers=()
     
     for (( i=0; i<${#source_vm_choices}; i++ )); do
-        local choice=${source_vm_choices:$i:1}
-        local vm_index=$((choice-1))
+        local src_choice=${source_vm_choices:$i:1}
+        local dst_choice=${dest_vm_choices:$i:1}
+        local src_vm_index=$((src_choice-1))
+        local dst_vm_index=$((dst_choice-1))
         local job_number=$((i+1))
         
         echo -e "\n======================================================="
-        echo "Starting migration job #$job_number: ${source_vms[$vm_index]}"
+        echo "Starting migration job #$job_number:"
+        echo "Source VM: ${SOURCE_VMS[$src_vm_index]}"
+        echo "Destination VM: ${DEST_VMS[$dst_vm_index]}"
         echo "Service: ${service^}"
         echo "======================================================="
         
         # Run the job in background
-        (process_migration_job "$job_number" "$source_datacenter" "$dest_datacenter" "$vm_index" "$service" "${source_vms[@]}") &
+        (process_migration_job "$job_number" "$source_datacenter" "$dest_datacenter" "$src_vm_index" "$dst_vm_index" "$service" "${SOURCE_VMS[@]}") &
         local pid=$!
         job_pids+=($pid)
         job_numbers+=($job_number)
@@ -526,30 +563,13 @@ validate_service() {
     return 0
 }
 
-# Convert comma-separated VM list to digit string
-convert_vm_input() {
-    local input=$1
-    local max_vm=$2
+# Convert 'all' to a sequence of VM numbers
+convert_all_vms() {
+    local max_vm=$1
     local vm_choices=""
     
-    # Handle 'all' option
-    if [[ "$input" == "all" ]]; then
-        for (( i=1; i<=$max_vm; i++ )); do
-            vm_choices="${vm_choices}${i}"
-        done
-        echo "$vm_choices"
-        return 0
-    fi
-    
-    # Convert comma-separated list to string of digits
-    IFS=',' read -ra VM_ARRAY <<< "$input"
-    for vm in "${VM_ARRAY[@]}"; do
-        # Validate each VM number
-        if [[ ! $vm =~ ^[1-9][0-9]*$ ]] || [[ $vm -gt $max_vm ]]; then
-            echo "error"
-            return 1
-        fi
-        vm_choices="${vm_choices}${vm}"
+    for (( i=1; i<=$max_vm; i++ )); do
+        vm_choices="${vm_choices}${i}"
     done
     
     echo "$vm_choices"
@@ -568,6 +588,7 @@ main() {
     source_dc_index=-1
     dest_dc_index=-1
     source_vm_choices=""
+    dest_vm_choices=""
     
     # Process SOURCE_DATACENTER
     if [[ -n "$SOURCE_DATACENTER" ]]; then
@@ -601,15 +622,68 @@ main() {
             done
             auto_mode_valid=false
         else
-            # Check if source and destination are different
-            if [[ "$SOURCE_DATACENTER" == "$DEST_DATACENTER" ]]; then
-                echo "ERROR: Source and destination datacenters must be different"
+            # Find the index of the destination datacenter
+            for i in "${!DATACENTERS[@]}"; do
+                if [[ "${DATACENTERS[$i]}" == "$DEST_DATACENTER" ]]; then
+                    dest_dc_index=$i
+                    break
+                fi
+            done
+        fi
+    else
+        auto_mode_valid=false
+    fi
+    
+    # Get VMs for source and destination datacenters if we have valid datacenter selections
+    if [[ $source_dc_index -ge 0 ]]; then
+        SOURCE_VMS=($(get_datacenter_vms "$SOURCE_DATACENTER"))
+    fi
+    
+    if [[ $dest_dc_index -ge 0 ]]; then
+        DEST_VMS=($(get_datacenter_vms "$DEST_DATACENTER"))
+    fi
+    
+    # Process SOURCE_VM_INPUT if provided
+    if [[ -n "$SOURCE_VM_INPUT" && -n "$SOURCE_VMS" ]]; then
+        # Parse comma-separated input or 'all'
+        source_vm_choices=$(parse_vm_args "$SOURCE_VM_INPUT" "${#SOURCE_VMS[@]}")
+        
+        if [[ "$source_vm_choices" == "error" ]]; then
+            echo "ERROR: Invalid source VM format: $SOURCE_VM_INPUT"
+            echo "Must be comma-separated numbers (e.g., '3,4,5') or 'all'"
+            auto_mode_valid=false
+        fi
+    else
+        auto_mode_valid=false
+    fi
+    
+    # Process DEST_VM_INPUT if provided
+    if [[ -n "$DEST_VM_INPUT" && -n "$DEST_VMS" && -n "$source_vm_choices" ]]; then
+        # Parse comma-separated input
+        dest_vm_choices=$(parse_vm_args "$DEST_VM_INPUT" "${#DEST_VMS[@]}")
+        
+        if [[ "$dest_vm_choices" == "error" ]]; then
+            echo "ERROR: Invalid destination VM format: $DEST_VM_INPUT"
+            echo "Must be comma-separated numbers (e.g., '1,2,6')"
+            auto_mode_valid=false
+        else
+            # Check if destination VM count matches source VM count
+            if [[ ${#dest_vm_choices} -ne ${#source_vm_choices} ]]; then
+                echo "ERROR: Source and destination VM lists must have the same length"
+                echo "Source VMs: ${#source_vm_choices} entries, Destination VMs: ${#dest_vm_choices} entries"
                 auto_mode_valid=false
-            else
-                # Find the index of the destination datacenter
-                for i in "${!DATACENTERS[@]}"; do
-                    if [[ "${DATACENTERS[$i]}" == "$DEST_DATACENTER" ]]; then
-                        dest_dc_index=$i
+            fi
+            
+            # When source and destination datacenters are the same, check for overlapping VMs
+            if [[ "$SOURCE_DATACENTER" == "$DEST_DATACENTER" ]]; then
+                for (( i=0; i<${#source_vm_choices}; i++ )); do
+                    local src_choice=${source_vm_choices:$i:1}
+                    local dst_choice=${dest_vm_choices:$i:1}
+                    
+                    if [[ $src_choice -eq $dst_choice ]]; then
+                        echo "ERROR: Source and destination VMs cannot be the same when using the same datacenter"
+                        echo "Problem detected: VM #$src_choice is used as both source and destination"
+                        auto_mode_valid=false
                         break
                     fi
                 done
@@ -617,25 +691,6 @@ main() {
         fi
     else
         auto_mode_valid=false
-    fi
-    
-    # Get VMs for source datacenter if we have a valid source datacenter
-    if [[ $source_dc_index -ge 0 ]]; then
-        SOURCE_VMS=($(get_datacenter_vms "$SOURCE_DATACENTER"))
-        
-        # Process SOURCE_VM_INPUT if provided
-        if [[ -n "$SOURCE_VM_INPUT" ]]; then
-            # Convert input to digit string
-            source_vm_choices=$(convert_vm_input "$SOURCE_VM_INPUT" "${#SOURCE_VMS[@]}")
-            
-            if [[ "$source_vm_choices" == "error" ]]; then
-                echo "ERROR: Invalid VM numbers: $SOURCE_VM_INPUT"
-                echo "Valid range is 1-${#SOURCE_VMS[@]} or 'all'"
-                auto_mode_valid=false
-            fi
-        else
-            auto_mode_valid=false
-        fi
     fi
     
     # Process SELECTED_SERVICE
@@ -693,12 +748,7 @@ main() {
                 read -p "Select destination datacenter (1-${#DATACENTERS[@]}): " dest_dc_choice
                 if [[ $dest_dc_choice =~ ^[1-${#DATACENTERS[@]}]$ ]]; then
                     DEST_DATACENTER=${DATACENTERS[$((dest_dc_choice-1))]}
-                    # Ensure destination is different from source
-                    if [ "$DEST_DATACENTER" != "$SOURCE_DATACENTER" ]; then
-                        break
-                    else
-                        echo "Destination datacenter must be different from source. Please try again."
-                    fi
+                    break
                 else
                     echo "Invalid choice. Please try again."
                 fi
@@ -707,10 +757,11 @@ main() {
             echo "Using destination datacenter: $DEST_DATACENTER"
         fi
 
-        # Get VMs for source datacenter if needed
-        if [[ -z "$SOURCE_VMS" ]]; then
-            SOURCE_VMS=($(get_datacenter_vms "$SOURCE_DATACENTER"))
-        fi
+        # Get VMs for source datacenter
+        SOURCE_VMS=($(get_datacenter_vms "$SOURCE_DATACENTER"))
+        
+        # Get VMs for destination datacenter
+        DEST_VMS=($(get_datacenter_vms "$DEST_DATACENTER"))
 
         # Display source VM options with "all" option
         echo "Available Source VMs:"
@@ -727,10 +778,7 @@ main() {
                 # Check if user selected "all"
                 if [[ $source_vm_input =~ ^[aA][lL][lL]$ ]] || [[ $source_vm_input -eq $((${#SOURCE_VMS[@]}+1)) ]]; then
                     # Generate sequence for all VMs: "123456..." up to the number of VMs
-                    source_vm_choices=""
-                    for (( i=1; i<=${#SOURCE_VMS[@]}; i++ )); do
-                        source_vm_choices="${source_vm_choices}${i}"
-                    done
+                    source_vm_choices=$(convert_all_vms "${#SOURCE_VMS[@]}")
                     break
                 fi
                 
@@ -759,7 +807,73 @@ main() {
                 break
             done
         else
-            echo "Using source VMs: $(echo $SOURCE_VM_INPUT | tr ',' ' ')"
+            echo "Using source VMs: $source_vm_choices"
+        fi
+        
+        # Display destination VM options with "all" option
+        echo "Available Destination VMs:"
+        for i in "${!DEST_VMS[@]}"; do
+            echo "$((i+1)). ${DEST_VMS[i]}"
+        done
+        
+        # Select destination VMs
+        if [[ -z "$dest_vm_choices" ]]; then
+            while true; do
+                read -p "Select destination VMs (enter digits without spaces, e.g. 614 for VMs 6, 1, and 4): " dest_vm_input
+                
+                # Validate input - only digits allowed
+                if [[ ! $dest_vm_input =~ ^[1-9]+$ ]]; then
+                    echo "Invalid input. Please enter only digits corresponding to VM numbers."
+                    continue
+                fi
+                
+                # Check if destination VM count matches source VM count
+                if [[ ${#dest_vm_input} -ne ${#source_vm_choices} ]]; then
+                    echo "Error: The number of destination VMs must match the number of source VMs."
+                    echo "You selected ${#source_vm_choices} source VMs but ${#dest_vm_input} destination VMs."
+                    continue
+                fi
+                
+                # Validate that all digits are valid VM indices
+                local invalid_choice=false
+                for (( i=0; i<${#dest_vm_input}; i++ )); do
+                    local choice=${dest_vm_input:$i:1}
+                    if [[ $choice -gt ${#DEST_VMS[@]} ]]; then
+                        echo "Invalid choice: $choice. Maximum is ${#DEST_VMS[@]}."
+                        invalid_choice=true
+                        break
+                    fi
+                done
+                
+                if [ "$invalid_choice" = true ]; then
+                    continue
+                fi
+                
+                # When source and destination datacenters are the same, check for overlapping VMs
+                if [[ "$SOURCE_DATACENTER" == "$DEST_DATACENTER" ]]; then
+                    local overlap_detected=false
+                    for (( i=0; i<${#source_vm_choices}; i++ )); do
+                        local src_choice=${source_vm_choices:$i:1}
+                        local dst_choice=${dest_vm_input:$i:1}
+                        
+                        if [[ $src_choice -eq $dst_choice ]]; then
+                            echo "Error: Source and destination VMs cannot be the same when using the same datacenter."
+                            echo "Problem detected: VM #$src_choice (${SOURCE_VMS[$((src_choice-1))]})"
+                            overlap_detected=true
+                            break
+                        fi
+                    done
+                    
+                    if [[ "$overlap_detected" == "true" ]]; then
+                        continue
+                    fi
+                fi
+                
+                dest_vm_choices=$dest_vm_input
+                break
+            done
+        else
+            echo "Using destination VMs: $dest_vm_choices"
         fi
         
         # Ask for parallel job count if not provided
@@ -800,29 +914,20 @@ main() {
 
     # Show configuration summary and get final approval
     echo -e "\nConfiguration Summary:"
-    echo -n "Source: $SOURCE_DATACENTER - Server Order: ("
-    for (( i=0; i<${#source_vm_choices}; i++ )); do
-        local choice=${source_vm_choices:$i:1}
-        local vm_index=$((choice-1))
-        echo -n "$((i+1))- ${SOURCE_VMS[$vm_index]} "
-    done
-    echo ")"
-    
-    echo -n "Destination: $DEST_DATACENTER - Server Order: ("
-    for (( i=0; i<${#source_vm_choices}; i++ )); do
-        local choice=${source_vm_choices:$i:1}
-        local vm_index=$((choice-1))
-        
-        # Extract VM number from source VM name
-        local source_vm_number=$(echo "${SOURCE_VMS[$vm_index]}" | sed "s/.*\([0-9]\+\).*/\1/")
-        local dest_vm="cr${source_vm_number}${DEST_DATACENTER}"
-        
-        echo -n "$((i+1))- ${dest_vm} "
-    done
-    echo ")"
-    
+    echo "Source datacenter: $SOURCE_DATACENTER"
+    echo "Destination datacenter: $DEST_DATACENTER"
     echo "Maximum parallel jobs: $MAX_PARALLEL_JOBS"
     echo "Selected service: ${SELECTED_SERVICE^}"
+    echo -e "\nVM Mappings:"
+    
+    for (( i=0; i<${#source_vm_choices}; i++ )); do
+        local src_choice=${source_vm_choices:$i:1}
+        local dst_choice=${dest_vm_choices:$i:1}
+        local src_vm_index=$((src_choice-1))
+        local dst_vm_index=$((dst_choice-1))
+        
+        echo "  ${SOURCE_VMS[$src_vm_index]} → ${DEST_VMS[$dst_vm_index]}"
+    done
     
     # Get confirmation in interactive mode
     if [[ "$NON_INTERACTIVE" == "false" ]]; then
@@ -836,7 +941,7 @@ main() {
     fi
 
     # Process migration jobs in parallel
-    process_parallel_jobs "$SOURCE_DATACENTER" "$DEST_DATACENTER" "$source_vm_choices" "$SELECTED_SERVICE" "${SOURCE_VMS[@]}"
+    process_parallel_jobs "$SOURCE_DATACENTER" "$DEST_DATACENTER" "$source_vm_choices" "$dest_vm_choices" "$SELECTED_SERVICE"
 
     # Log completion
     log_header "All Service Transfer Operations Completed"

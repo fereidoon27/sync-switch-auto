@@ -4,5 +4,5 @@ Selected SOURCE VMs:
 DEST_DATACENTER: arvan
 Selected DEST VMs:
   - cr7arvan
-MAX_PARALLEL_JOBS: 5
+MAX_PARALLEL_JOBS: 1
 SELECTED_SERVICE: binance

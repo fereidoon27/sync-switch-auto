@@ -11,6 +11,49 @@ RESET='\033[0m'
 INFO_PATH="$(dirname "$0")/Info"
 COLLECTED_FILE="$INFO_PATH/Collected_Input"
 
+# Function to map selected VM names to their position numbers based on servers.conf
+parse_vm_list() {
+    local section_header="$1"
+    local stop_pattern="$2"
+    local dc="$3"
+    local vm_list_raw
+    # Extract the block of lines under the given header until the stop pattern is reached
+    vm_list_raw=$(awk -v header="$section_header" -v stop="$stop_pattern" '
+        $0 ~ header {flag=1; next}
+        $0 ~ stop {flag=0}
+        flag { if($0 ~ /-/) print $0 }
+    ' "$COLLECTED_FILE")
+    
+    # Get the available VMs for the specified datacenter from servers.conf (preserving file order)
+    local available_vms=()
+    while IFS= read -r line; do
+         available_vms+=("$line")
+    done < <(awk -F'|' -v dc="$dc" '$1==dc {print $2}' "$INFO_PATH/servers.conf")
+    
+    local vm_indices=()
+    # Process each line from the collected input block
+    while IFS= read -r line; do
+         # Remove leading spaces and the dash
+         vm_name=$(echo "$line" | sed -E 's/^[[:space:]]*-[[:space:]]*//')
+         # Find the position (1-indexed) of this VM name in available_vms array
+         index=0
+         found_index=""
+         for v in "${available_vms[@]}"; do
+             index=$((index+1))
+             if [[ "$v" == "$vm_name" ]]; then
+                 found_index=$index
+                 break
+             fi
+         done
+         if [[ -n "$found_index" ]]; then
+             vm_indices+=("$found_index")
+         fi
+    done <<< "$vm_list_raw"
+    
+    # Join the indices with commas
+    IFS=, ; echo "${vm_indices[*]}" ; IFS=' '
+}
+
 while true; do
 
     echo -e "${CYAN}========================================${RESET}"
@@ -30,8 +73,7 @@ while true; do
     echo ""
 
     echo -e "${GREEN}4: Run Complete Workflow Sequentially${RESET}"
-    echo -e "   - ${CYAN}First gather all required inputs (via input.sh), then sequentially execute file synchronization,"
-    echo -e "     environment update, and service migration using the collected parameters.${RESET}"
+    echo -e "   - ${CYAN}Collect inputs (via input.sh) and run synchronization, environment update, and service migration in sequence.${RESET}"
     echo ""
 
     echo -e "${RED}0: Exit - Terminate the main script.${RESET}"
@@ -56,7 +98,7 @@ while true; do
         4)
             echo "Running Complete Workflow Sequentially..."
 
-            # First, run input.sh to gather all necessary inputs.
+            # Run input.sh to gather all necessary inputs if available.
             if [ -x "./input.sh" ]; then
                 echo "Collecting input..."
                 ./input.sh
@@ -70,45 +112,25 @@ while true; do
                 exit 1
             fi
 
-            # Parse the Collected_Input file for necessary values.
+            # Parse inputs from Collected_Input
             SOURCE_DC=$(grep "^SOURCE_DATACENTER:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
             DEST_DC=$(grep "^DEST_DATACENTER:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
             MAX_PARALLEL_JOBS=$(grep "^MAX_PARALLEL_JOBS:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
             SELECTED_SERVICE=$(grep "^SELECTED_SERVICE:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
 
-            # Function to parse VM list from Collected_Input section.
-            parse_vm_list() {
-                local section_header="$1"
-                local stop_pattern="$2"
-                local vm_list_raw
-                vm_list_raw=$(awk -v header="$section_header" -v stop="$stop_pattern" '
-                    $0 ~ header {flag=1; next}
-                    $0 ~ stop {flag=0}
-                    flag { if($0 ~ /-/) print $0 }
-                ' "$COLLECTED_FILE")
-                local vm_numbers=()
-                while IFS= read -r line; do
-                    # Extract the number from a line like "  - cr3arvan"
-                    num=$(echo "$line" | sed -E 's/.*cr([0-9]+).*/\1/')
-                    vm_numbers+=("$num")
-                done <<< "$vm_list_raw"
-                # Join the numbers with commas.
-                IFS=, ; echo "${vm_numbers[*]}" ; IFS=' '
-            }
-
-            # Parse the selected VM numbers for source and destination.
-            SOURCE_VM_ARG=$(parse_vm_list "Selected SOURCE VMs:" "DEST_DATACENTER:")
-            DEST_VM_ARG=$(parse_vm_list "Selected DEST VMs:" "MAX_PARALLEL_JOBS:")
+            # Map VM names to position numbers based on servers.conf for each datacenter.
+            SOURCE_VM_ARG=$(parse_vm_list "Selected SOURCE VMs:" "DEST_DATACENTER:" "$SOURCE_DC")
+            DEST_VM_ARG=$(parse_vm_list "Selected DEST VMs:" "MAX_PARALLEL_JOBS:" "$DEST_DC")
 
             echo "Collected inputs:"
             echo "  SOURCE_DATACENTER: $SOURCE_DC"
             echo "  DEST_DATACENTER: $DEST_DC"
-            echo "  Selected SOURCE VMs (indices): $SOURCE_VM_ARG"
-            echo "  Selected DEST VMs (indices): $DEST_VM_ARG"
+            echo "  Selected SOURCE VMs (positions): $SOURCE_VM_ARG"
+            echo "  Selected DEST VMs (positions): $DEST_VM_ARG"
             echo "  MAX_PARALLEL_JOBS: $MAX_PARALLEL_JOBS"
             echo "  SELECTED_SERVICE: $SELECTED_SERVICE"
 
-            # Now run the scripts sequentially with the constructed parameters.
+            # Execute the commands sequentially with the constructed parameters.
             echo "Step 1: Running Synchronization..."
             ./simple_synce-main2vm.sh -d "$DEST_DC" -v "$DEST_VM_ARG" -j "$MAX_PARALLEL_JOBS" -y
 

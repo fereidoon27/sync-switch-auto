@@ -1,5 +1,6 @@
 #!/bin/bash
-# input.sh: Integrated input script with colorful menus and saving plain text output
+# input.sh: Integrated input script with colorful menus, saving plain text output,
+# and validating that source and destination VMs are not the same when datacenters are identical.
 
 #--------------------------------------------------
 # Color Definitions
@@ -102,16 +103,12 @@ get_action_input() {
         fi
     done
 
-    # Prompt for DESTINATION_DATACENTER
+    # Prompt for DESTINATION_DATACENTER (it may be the same as source)
     while true; do
         read -p "$(echo -e ${BLUE}"Select DESTINATION datacenter (1-${#DATACENTERS[@]}): "${RESET})" dst_choice
         if [[ "$dst_choice" =~ ^[0-9]+$ ]] && [ "$dst_choice" -ge 1 ] && [ "$dst_choice" -le "${#DATACENTERS[@]}" ]; then
             DEST_DATACENTER="${DATACENTERS[$((dst_choice-1))]}"
-            if [ "$DEST_DATACENTER" = "$SOURCE_DATACENTER" ]; then
-                echo -e "${RED}Destination datacenter must differ from source. Try again.${RESET}"
-            else
-                break
-            fi
+            break
         else
             echo -e "${RED}Invalid selection. Try again.${RESET}"
         fi
@@ -132,10 +129,15 @@ get_action_input() {
     while true; do
         read -p "$(echo -e ${BLUE}"Select DESTINATION VM(s) (e.g., '246' for VMs 2,4,6 or 'all'): "${RESET})" dst_vm_input
         SELECTED_DEST_VMS=()
-        if [ "$dst_vm_input" = "all" ] || [ "$dst_vm_input" = "$(( ${#DEST_VMS[@]}+1 ))" ]; then
+        # If user types "all", or if the numeric input equals the "all" option:
+        if [ "$dst_vm_input" = "all" ]; then
             SELECTED_DEST_VMS=("${DEST_VMS[@]}")
             break
         elif [[ "$dst_vm_input" =~ ^[0-9]+$ ]]; then
+            if [ "$dst_vm_input" -eq $(( ${#DEST_VMS[@]}+1 )) ]; then
+                SELECTED_DEST_VMS=("${DEST_VMS[@]}")
+                break
+            fi
             valid=true
             for (( i=0; i<${#dst_vm_input}; i++ )); do
                 digit="${dst_vm_input:$i:1}"
@@ -147,9 +149,34 @@ get_action_input() {
                     break
                 fi
             done
-            [ "$valid" = true ] && break
         else
             echo -e "${RED}Invalid selection. Try again.${RESET}"
+            valid=false
+        fi
+
+        # When source and destination datacenters are the same, ensure no overlapping VMs.
+        if [ "$SOURCE_DATACENTER" = "$DEST_DATACENTER" ]; then
+            overlap=false
+            for sv in "${SELECTED_SOURCE_VMS[@]}"; do
+                for dv in "${SELECTED_DEST_VMS[@]}"; do
+                    if [ "$sv" = "$dv" ]; then
+                        overlap=true
+                        break
+                    fi
+                done
+                if [ "$overlap" = true ]; then
+                    break
+                fi
+            done
+
+            if [ "$overlap" = true ]; then
+                echo -e "${RED}Error: When source and destination datacenter are the same, they must not select the same VMs.${RESET}"
+                continue
+            fi
+        fi
+
+        if [ "$valid" = true ]; then
+            break
         fi
     done
 

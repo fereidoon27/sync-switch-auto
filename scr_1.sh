@@ -1,74 +1,85 @@
 #!/bin/bash
-# sc_1.sh: A simple script to get user input and print the results
+# sc_1: Simple script to get user input (datacenter and VMs) from servers.conf
 
-# This function prompts for a datacenter and server(s) selection,
-# storing the selections in the variables SELECTED_DC and SERVERS_SELECTED.
+# Get script directory and set config file path
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+INFO_PATH="${SCRIPT_DIR}/Info"
+SERVERS_CONF="${INFO_PATH}/servers.conf"
+
+# Function: get_user_input
+# Reads servers.conf, prompts for datacenter and VM selection, and stores selections in variables.
 get_user_input() {
-    # Simulated list of datacenters (in real use, these may come from a config file)
-    local datacenters=("cloudzy" "arvan" "azma")
+    # Check for servers.conf existence
+    if [ ! -f "$SERVERS_CONF" ]; then
+        echo "Error: servers.conf not found at $SERVERS_CONF"
+        exit 1
+    fi
+
+    # Get unique datacenters from servers.conf (format: datacenter|vm_name|ip|host|username|port)
+    mapfile -t datacenters < <(awk -F'|' '$1 != "" {print $1}' "$SERVERS_CONF" | sort -u)
     
-    # Prompt for datacenter if not provided via environment variable DATACENTER
-    if [ -z "$DATACENTER" ]; then
-        echo "Available Datacenters:"
-        for i in "${!datacenters[@]}"; do
-            echo "$((i+1)). ${datacenters[$i]}"
-        done
-        read -p "Select datacenter (1-${#datacenters[@]}): " dc_choice
-        if ! [[ "$dc_choice" =~ ^[0-9]+$ ]] || [ "$dc_choice" -lt 1 ] || [ "$dc_choice" -gt "${#datacenters[@]}" ]; then
-            echo "Invalid selection. Exiting."
-            exit 1
-        fi
-        SELECTED_DC="${datacenters[$((dc_choice-1))]}"
-    else
-        SELECTED_DC="$DATACENTER"
-    fi
+    echo "Available Datacenters:"
+    for i in "${!datacenters[@]}"; do
+        echo "$((i+1)). ${datacenters[$i]}"
+    done
 
-    # Simulate server list for the chosen datacenter
-    if [ "$SELECTED_DC" == "cloudzy" ]; then
-        servers=("server1" "server2" "server3")
-    elif [ "$SELECTED_DC" == "arvan" ]; then
-        servers=("arvan1" "arvan2" "arvan3")
-    else
-        servers=("azma1" "azma2" "azma3")
+    # Prompt user to select a datacenter
+    read -p "Select datacenter (1-${#datacenters[@]}): " dc_choice
+    if ! [[ "$dc_choice" =~ ^[0-9]+$ ]] || [ "$dc_choice" -lt 1 ] || [ "$dc_choice" -gt "${#datacenters[@]}" ]; then
+        echo "Invalid selection. Exiting."
+        exit 1
     fi
-
-    # Prompt for server selection if not provided via environment variable SERVERS
-    if [ -z "$SERVERS" ]; then
-        echo "Available Servers in $SELECTED_DC:"
-        for i in "${!servers[@]}"; do
-            echo "$((i+1)). ${servers[$i]}"
-        done
-        echo "$(( ${#servers[@]}+1 )). all"
-        read -p "Select server(s) (e.g., 13 for servers 1 and 3, or 'all'): " server_choice
-        
-        local selected_indices=()
-        if [ "$server_choice" == "$(( ${#servers[@]}+1 ))" ] || [ "$server_choice" == "all" ]; then
-            for i in "${!servers[@]}"; do
-                selected_indices+=("$i")
-            done
-        else
-            # Process each digit of the input string
-            for (( i=0; i<${#server_choice}; i++ )); do
-                digit="${server_choice:$i:1}"
-                if [[ "$digit" =~ ^[0-9]$ ]] && [ "$digit" -ge 1 ] && [ "$digit" -le "${#servers[@]}" ]; then
-                    selected_indices+=($((digit-1)))
-                fi
-            done
-        fi
-        
-        local servers_selected=""
-        for idx in "${selected_indices[@]}"; do
-            servers_selected+="${servers[$idx]} "
-        done
-        SERVERS_SELECTED=$(echo "$servers_selected" | xargs)  # Trim any extra spaces
-    else
-        SERVERS_SELECTED="$SERVERS"
-    fi
-
-    # Print the selections
+    SELECTED_DC="${datacenters[$((dc_choice-1))]}"
     echo "Selected Datacenter: $SELECTED_DC"
-    echo "Selected Servers: $SERVERS_SELECTED"
+
+    # Get VMs for the selected datacenter (from the second field)
+    mapfile -t available_vms < <(awk -F'|' -v dc="$SELECTED_DC" '$1 == dc {print $2}' "$SERVERS_CONF")
+    if [ ${#available_vms[@]} -eq 0 ]; then
+        echo "No VMs found for datacenter $SELECTED_DC."
+        exit 1
+    fi
+
+    echo "Available VMs in $SELECTED_DC:"
+    for i in "${!available_vms[@]}"; do
+        echo "$((i+1)). ${available_vms[$i]}"
+    done
+    echo "$(( ${#available_vms[@]}+1 )). all (select all VMs)"
+
+    # Prompt user to select VMs (accepting comma-separated numbers or "all")
+    read -p "Enter VM numbers (e.g., 1,3,5 or all): " vm_input
+    # Normalize input: remove spaces and convert to lowercase
+    vm_input=$(echo "$vm_input" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+    
+    SELECTED_VMS=()
+    if [ "$vm_input" = "all" ] || [ "$vm_input" = "$(( ${#available_vms[@]}+1 ))" ]; then
+        SELECTED_VMS=("${available_vms[@]}")
+    else
+        IFS=',' read -ra vm_numbers <<< "$vm_input"
+        for num in "${vm_numbers[@]}"; do
+            if ! [[ "$num" =~ ^[0-9]+$ ]] || [ "$num" -lt 1 ] || [ "$num" -gt "${#available_vms[@]}" ]; then
+                echo "Warning: Invalid VM number '$num' skipped."
+            else
+                SELECTED_VMS+=("${available_vms[$((num-1))]}")
+            fi
+        done
+    fi
+
+    if [ ${#SELECTED_VMS[@]} -eq 0 ]; then
+        echo "No valid VMs selected. Exiting."
+        exit 1
+    fi
 }
 
-# Main execution: call the function to get input and then display the results
+# Main execution
 get_user_input
+
+# Print the selections
+echo ""
+echo "======================================"
+echo "User Selections:"
+echo "Datacenter: $SELECTED_DC"
+echo "VMs:"
+for vm in "${SELECTED_VMS[@]}"; do
+    echo " - $vm"
+done
+echo "======================================"

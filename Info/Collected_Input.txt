@@ -1,0 +1,18 @@
+
+[0;35m[1m================== Collected Input ==================[0m
+[0;33mSOURCE_DATACENTER:[0m cloudzy
+[0;33mSelected SOURCE VMs:[0m
+  - cr1cloudzy
+  - cr2cloudzy
+  - cr3cloudzy
+  - cr4cloudzy
+  - cr5cloudzy
+  - cr6cloudzy
+[0;33mDEST_DATACENTER:[0m arvan
+[0;33mSelected DEST VMs:[0m
+  - cr1arvan
+  - cr2arvan
+  - cr3arvan
+[0;33mMAX_PARALLEL_JOBS:[0m 5
+[0;33mSELECTED_SERVICE:[0m kucoin
+[0;35m[1m=====================================================[0m

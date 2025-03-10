@@ -112,23 +112,27 @@ while true; do
                 exit 1
             fi
 
-            # Parse inputs from Collected_Input
+            # Parse inputs from Collected_Input (new order)
+            SELECTED_SERVICES=$(grep "^SELECTED SERVICES:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
+            # Convert space-separated services to comma-separated list.
+            SELECTED_SERVICES=$(echo "$SELECTED_SERVICES" | tr ' ' ',')
             SOURCE_DC=$(grep "^SOURCE_DATACENTER:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
             DEST_DC=$(grep "^DEST_DATACENTER:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
             MAX_PARALLEL_JOBS=$(grep "^MAX_PARALLEL_JOBS:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
-            SELECTED_SERVICE=$(grep "^SELECTED_SERVICE:" "$COLLECTED_FILE" | cut -d':' -f2 | xargs)
 
             # Map VM names to position numbers based on servers.conf for each datacenter.
+            # For SOURCE VMs, the block starts with "Selected SOURCE VMs:" and ends at the next header "DEST_DATACENTER:"
             SOURCE_VM_ARG=$(parse_vm_list "Selected SOURCE VMs:" "DEST_DATACENTER:" "$SOURCE_DC")
+            # For DEST VMs, the block starts with "Selected DEST VMs:" and ends at the next header "MAX_PARALLEL_JOBS:"
             DEST_VM_ARG=$(parse_vm_list "Selected DEST VMs:" "MAX_PARALLEL_JOBS:" "$DEST_DC")
 
             echo "Collected inputs:"
+            echo "  SELECTED SERVICES: $SELECTED_SERVICES"
             echo "  SOURCE_DATACENTER: $SOURCE_DC"
             echo "  DEST_DATACENTER: $DEST_DC"
             echo "  Selected SOURCE VMs (positions): $SOURCE_VM_ARG"
             echo "  Selected DEST VMs (positions): $DEST_VM_ARG"
             echo "  MAX_PARALLEL_JOBS: $MAX_PARALLEL_JOBS"
-            echo "  SELECTED_SERVICE: $SELECTED_SERVICE"
 
             # Execute the commands sequentially with the constructed parameters.
             echo "Step 1: Running Synchronization..."
@@ -138,7 +142,7 @@ while true; do
             ./edit_edn_base_on_ip.sh --datacenter "$DEST_DC" --servers "$DEST_VM_ARG"
 
             echo "Step 3: Executing Service Switch..."
-            ./action.sh -s "$SOURCE_DC" -d "$DEST_DC" -v "$SOURCE_VM_ARG" -D "$DEST_VM_ARG" -p "$MAX_PARALLEL_JOBS" -r "$SELECTED_SERVICE" -y
+            ./action.sh -s "$SOURCE_DC" -d "$DEST_DC" -v "$SOURCE_VM_ARG" -D "$DEST_VM_ARG" -p "$MAX_PARALLEL_JOBS" -r "$SELECTED_SERVICES" -y
             ;;
         0)
             echo "Exiting Main Script. Goodbye!"

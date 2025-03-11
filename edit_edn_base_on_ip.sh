@@ -4,7 +4,8 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 INFO_PATH="$(dirname "$0")/Info"
 SERVERS_CONF="$INFO_PATH/servers.conf"
-MAX_PARALLEL=6  # Maximum number of parallel processes
+MAX_PARALLEL=5  # Maximum number of parallel processes
+SSH_OPTS="-o StrictHostKeyChecking=no"  # SSH options for automation
 
 # Define usage function
 show_usage() {
@@ -229,8 +230,6 @@ DEST_ENV_FILE="hermes-env.sh"
 # Prepare temporary files for the environments
 TEMP_DIR=$(mktemp -d)
 mkdir -p "$TEMP_DIR/internal" "$TEMP_DIR/external"
-# cp "/home/ubuntu/ansible/env/envs" "$TEMP_DIR/internal/envs"
-# cp "/home/ubuntu/ansible/env/newpin/envs" "$TEMP_DIR/external/envs"
 cp "$HOME/ansible/env/envs" "$TEMP_DIR/internal/envs"
 cp "$HOME/ansible/env/newpin/envs" "$TEMP_DIR/external/envs"
 
@@ -258,13 +257,13 @@ process_server() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') Starting processing for $SELECTED_SERVER" > "$LOG_FILE"
     
     # Setup SSH connection sharing
-    ssh -o ControlMaster=yes -o ControlPath="$SSH_CONTROL" -o ControlPersist=10m -p "$DEST_PORT" -n "${DEST_USER}@${DEST_IP}" true >> "$LOG_FILE" 2>&1
+    ssh $SSH_OPTS -o ControlMaster=yes -o ControlPath="$SSH_CONTROL" -o ControlPersist=10m -p "$DEST_PORT" -n "${DEST_USER}@${DEST_IP}" true >> "$LOG_FILE" 2>&1
     
     # Detect network type, copy environment, and configure all in one SSH session
     {
         # Step 1: Detect network type
         echo "$(date '+%Y-%m-%d %H:%M:%S') Detecting network type for $SELECTED_SERVER" >> "$LOG_FILE"
-        NETWORK_TYPE=$(ssh -o ControlPath="$SSH_CONTROL" -p "$DEST_PORT" "${DEST_USER}@${DEST_IP}" "$NETWORK_DETECT_SCRIPT")
+        NETWORK_TYPE=$(ssh $SSH_OPTS -o ControlPath="$SSH_CONTROL" -p "$DEST_PORT" "${DEST_USER}@${DEST_IP}" "$NETWORK_DETECT_SCRIPT")
         echo "$(date '+%Y-%m-%d %H:%M:%S') Network type for $SELECTED_SERVER: $NETWORK_TYPE" >> "$LOG_FILE"
         
         # Step 2: Set variables based on network type
@@ -280,7 +279,7 @@ process_server() {
         
         # Step 3: Copy environment file using rsync with connection sharing
         echo "$(date '+%Y-%m-%d %H:%M:%S') Copying environment file to $SELECTED_SERVER" >> "$LOG_FILE"
-        rsync -az --rsh="ssh -o ControlPath=$SSH_CONTROL -p $DEST_PORT" "$ENV_SOURCE" "${DEST_USER}@${DEST_IP}:/tmp/envs" >> "$LOG_FILE" 2>&1
+        rsync -az --rsh="ssh $SSH_OPTS -o ControlPath=$SSH_CONTROL -p $DEST_PORT" "$ENV_SOURCE" "${DEST_USER}@${DEST_IP}:/tmp/envs" >> "$LOG_FILE" 2>&1
         
         # Step 4: Prepare update script with the correct variables
         UPDATE_SCRIPT=${UPDATE_SCRIPT_TEMPLATE//__SHOULD_USE_PROXY__/$SHOULD_USE_PROXY}
@@ -289,7 +288,7 @@ process_server() {
         # Step 5: Execute setup and configuration in a single SSH session
         echo "$(date '+%Y-%m-%d %H:%M:%S') Setting up environment and configuring proxy for $SELECTED_SERVER" >> "$LOG_FILE"
         
-        ssh -o ControlPath="$SSH_CONTROL" -p "$DEST_PORT" "${DEST_USER}@${DEST_IP}" "
+        ssh $SSH_OPTS -o ControlPath="$SSH_CONTROL" -p "$DEST_PORT" "${DEST_USER}@${DEST_IP}" "
             # Move the environment file to the final location
             sudo cp /tmp/envs /etc/profile.d/$DEST_ENV_FILE && 
             sudo chmod 755 /etc/profile.d/$DEST_ENV_FILE &&
@@ -309,7 +308,7 @@ process_server() {
         " >> "$LOG_FILE" 2>&1
         
         # Close SSH connection sharing
-        ssh -o ControlPath="$SSH_CONTROL" -O exit "${DEST_USER}@${DEST_IP}" >> "$LOG_FILE" 2>&1
+        ssh $SSH_OPTS -o ControlPath="$SSH_CONTROL" -O exit "${DEST_USER}@${DEST_IP}" >> "$LOG_FILE" 2>&1
         
         echo "$(date '+%Y-%m-%d %H:%M:%S') Completed processing for $SELECTED_SERVER" >> "$LOG_FILE"
         echo "✓ Completed: $SELECTED_SERVER" # Output to main console

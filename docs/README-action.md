@@ -140,20 +140,6 @@ Synchronize_Switch/
 
 ---
 
-## Roadmap
-
-- Improve retry logic on SSH connection failures.
-- Add JSON/YAML configuration support to simplify server and service management.
-- Explore converting the script into a Go application for better performance and maintainability.
-
----
-
-## License
-
-This project is licensed under the MIT License.
-
----
-
 ## Author
 
 Fereidoon27  

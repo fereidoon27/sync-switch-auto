@@ -128,20 +128,6 @@ Synchronize_Switch/
 
 ---
 
-## Roadmap
-
-- Add support for CLI arguments to trigger specific flows without menu interaction.
-- Enhance error reporting and recovery across sequential workflows.
-- Potential integration with a web UI for non-technical users.
-
----
-
-## License
-
-This project is licensed under the MIT License.
-
----
-
 ## Author
 
 Fereidoon27  

@@ -121,20 +121,6 @@ Synchronize_Switch/
 
 ---
 
-## Roadmap
-
-- Add dynamic detection of environment file locations.
-- Improve error handling and logging.
-- Extend support for different configuration file formats.
-
----
-
-## License
-
-This project is licensed under the MIT License.
-
----
-
 ## Author
 
 Fereidoon27  

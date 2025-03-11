@@ -128,20 +128,6 @@ Synchronize_Switch/
 
 ---
 
-## Roadmap
-
-- Add CLI arguments for non-interactive input gathering.
-- Integrate validation against live SSH connectivity.
-- Extend support for additional service types.
-
----
-
-## License
-
-This project is licensed under the MIT License.
-
----
-
 ## Author
 
 Fereidoon27  

@@ -337,7 +337,8 @@ sync_vm() {
 
     # Extract VM number for source directory
     VM_NUMBER=$(echo "$VM" | sed -E 's/^cr([0-9]+).*/\1/')
-    SOURCE_PATH="/home/ubuntu/1111-binance-services/cr$VM_NUMBER"
+    # SOURCE_PATH="/home/amin/1111-binance-services/cr$VM_NUMBER"
+    SOURCE_PATH="$HOME/1111-binance-services/cr$VM_NUMBER"
     DEST_PATH="/home/$DEST_USER"
 
     log "Current VM: $VM ($DEST_HOST)"

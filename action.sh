@@ -1,5 +1,5 @@
 #!/bin/bash
-
+export LC_TIME=en_US.UTF-8
 # Log file setup
 ACTION_LOG="$HOME/service_actions_$(date +%Y%m%d).log"
 

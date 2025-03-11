@@ -4,7 +4,7 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 INFO_PATH="$(dirname "$0")/Info"
 SERVERS_CONF="$INFO_PATH/servers.conf"
-MAX_PARALLEL=5  # Maximum number of parallel processes
+MAX_PARALLEL=6  # Maximum number of parallel processes
 
 # Define usage function
 show_usage() {
@@ -229,8 +229,10 @@ DEST_ENV_FILE="hermes-env.sh"
 # Prepare temporary files for the environments
 TEMP_DIR=$(mktemp -d)
 mkdir -p "$TEMP_DIR/internal" "$TEMP_DIR/external"
-cp "/home/ubuntu/ansible/env/envs" "$TEMP_DIR/internal/envs"
-cp "/home/ubuntu/ansible/env/newpin/envs" "$TEMP_DIR/external/envs"
+# cp "/home/ubuntu/ansible/env/envs" "$TEMP_DIR/internal/envs"
+# cp "/home/ubuntu/ansible/env/newpin/envs" "$TEMP_DIR/external/envs"
+cp "$HOME/ansible/env/envs" "$TEMP_DIR/internal/envs"
+cp "$HOME/ansible/env/newpin/envs" "$TEMP_DIR/external/envs"
 
 # Prepare the environment files
 for env_file in "$TEMP_DIR/internal/envs" "$TEMP_DIR/external/envs"; do

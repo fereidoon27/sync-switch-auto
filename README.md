@@ -141,6 +141,18 @@ Below are two hypothetical examples showcasing how to use the **Synchronize\_Swi
 
 #### Step 1: Environment Setup
 
+The `servers.conf` file is stored in the `Info/` directory within the project structure. Each line in this file follows the format:
+
+```
+<datacenter>|<vm_name>|<ip_address>|<host_name>|<username>|<ssh_port>
+```
+
+For example:
+
+```
+azma|cr1azma|172.20.10.31|172.20.10.31|ubuntu|22
+```
+
 ```
 # servers.conf excerpt:
 arvan|cr1arvan|185.204.170.177|cr1arvan.stellaramc.ir|ubuntu|22

@@ -910,17 +910,21 @@ main() {
             echo "Using destination VMs: $dest_vm_choices"
         fi
         
-        # Ask for parallel job count if not provided
-        if [[ -z "$MAX_PARALLEL_JOBS" ]]; then
-            read -p "Enter maximum number of parallel jobs [2]: " MAX_PARALLEL_JOBS
-            MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-2}  # Default to 2 if empty
+        # Ask for parallel job count
+        if [[ "$auto_mode_valid" == "false" ]]; then
+            read -p "Enter maximum number of parallel jobs [1]: " MAX_PARALLEL_JOBS
+            MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-1}  # Default to 1 if empty
             
             # Validate input for parallel jobs
             if [[ ! $MAX_PARALLEL_JOBS =~ ^[1-9][0-9]*$ ]]; then
-                echo "Invalid input. Using default value of 2 parallel jobs."
-                MAX_PARALLEL_JOBS=2
+                echo "Invalid input. Using default value of 1 parallel job."
+                MAX_PARALLEL_JOBS=1
             fi
         else
+            # For automated mode
+            if [[ -z "$MAX_PARALLEL_JOBS" ]]; then
+                MAX_PARALLEL_JOBS=1
+            fi
             echo "Using maximum parallel jobs: $MAX_PARALLEL_JOBS"
         fi
         

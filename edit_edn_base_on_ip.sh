@@ -4,7 +4,7 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 INFO_PATH="$(dirname "$0")/Info"
 SERVERS_CONF="$INFO_PATH/servers.conf"
-MAX_PARALLEL=5  # Maximum number of parallel processes
+MAX_PARALLEL=6  # Maximum number of parallel processes
 SSH_OPTS="-o StrictHostKeyChecking=no"  # SSH options for automation
 
 # Define usage function

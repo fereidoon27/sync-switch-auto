@@ -43,7 +43,7 @@ usage() {
     echo "  -V               Verbose mode"
     echo "  -h               Display this help message"
     echo
-    echo "Example: $0 -s arvan -d cloudzy -v 345 -D 126 -p 3 -r binance -y"
+    echo "Example: $0 -s arvan -d cloudzy -v 3,4,5 -D 1,2,6 -p 3 -r binance -y"
     exit 1
 }
 
@@ -86,6 +86,8 @@ log() {
     local server=$2
     local status=$3
     local action_name=$4
+    local task_desc=$5
+    local job_num=${6:-""}
     
     # Use a fixed-width template format for perfect alignment
     if [[ -n "$status" ]]; then
@@ -100,12 +102,18 @@ log() {
         
         # Truncate or pad strings to exact lengths for perfect alignment
         local action_str=$(printf "%-12.12s" "$action")
-        local action_name_str=$(printf "%-20.20s" "$action_name")
-        local server_str=$(printf "%-15.15s" "$server")
+        local action_name_str=$(printf "%-30.30s" "$action_name")
+        local task_desc_str=$(printf "%-30.30s" "$task_desc")
+        local server_str=$(printf "%-20.20s" "$server")
+        local job_str=""
+        
+        if [[ -n "$job_num" ]]; then
+            job_str="| Job $job_num"
+        fi
         
         # Create the log message with exact spacing and alignment
-        printf "[%s] %s [Action %s] %-20s | Server: %-15s | STATUS: %s\n" \
-            "$timestamp" "$icon" "$action_str" "$action_name_str" "$server_str" "$status" | tee -a "$ACTION_LOG"
+        printf "[%s] %s [Action %s] | %-30s | Server: %-20s | STATUS: %-10s %s\n" \
+            "$timestamp" "$icon" "$action_str" "$task_desc_str" "$server_str" "$status" "$job_str" | tee -a "$ACTION_LOG"
     else
         # Simple log line for messages without structured format
         echo "[$timestamp] $1" | tee -a "$ACTION_LOG"
@@ -238,7 +246,7 @@ copy_deployment_scripts() {
     fi
     
     # Copy only the specific service scripts (faster than copying all scripts)
-    log "Copying deployment scripts" "$vm_name" "Started" "Copy Scripts"
+    log "Copying deployment scripts" "$vm_name" "Started" "Copy Scripts" "Copy Scripts for ${services[*]}" "$job_number"
     
     # Process each selected service
     for service in "${services[@]}"; do
@@ -254,7 +262,7 @@ copy_deployment_scripts() {
         # Copy service-specific scripts one by one
         scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/deploy_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
         if [ $? -ne 0 ]; then
-            log "Copy deploy script for $service" "$vm_name" "Failed" "Copy Scripts"
+            log "Copy deploy script" "$vm_name" "Failed" "Copy Scripts" "copy deploy_all_${service}.sh" "$job_number"
             return 1
         fi
         
@@ -284,7 +292,7 @@ copy_deployment_scripts() {
         return 1
     fi
     
-    log "Copying deployment scripts" "$vm_name" "Completed" "Copy Scripts"
+    log "Copying deployment scripts" "$vm_name" "Completed" "Copy Scripts" "Copy Scripts for ${services[*]}" "$job_number"
     return 0
 }
 
@@ -321,16 +329,16 @@ execute_action() {
             ;;
     esac
     
-    log "$action_num" "$vm_name" "Started" "$action_name"
+    log "$action_num" "$vm_name" "Started" "$action_name" "$action_name" "$job_number"
     
     # Execute the script on the remote machine (reusing connection)
     ssh $SSH_OPTS -p $port $user@$host "cd $target_path && $REMOTE_TMP_DIR/$action_script"
     local result=$?
     
     if [ $result -eq 0 ]; then
-        log "$action_num" "$vm_name" "Completed" "$action_name"
+        log "$action_num" "$vm_name" "Completed" "$action_name" "$action_name" "$job_number"
     else
-        log "$action_num" "$vm_name" "Failed" "$action_name"
+        log "$action_num" "$vm_name" "Failed" "$action_name" "$action_name" "$job_number"
         echo "ERROR: Action $action_num ($action_name) failed on $vm_name"
         return 1
     fi
@@ -586,8 +594,17 @@ convert_all_vms() {
 
 # Main script execution
 main() {
-    # Clear log file at the start
-    > "$ACTION_LOG"
+    # Append to log file if it exists, create it if it doesn't
+    if [ ! -f "$ACTION_LOG" ]; then
+        touch "$ACTION_LOG"
+        echo "# Service Migration Log - Started $(date)" >> "$ACTION_LOG"
+        echo "# Format: Timestamp | Action | Task Description | Server | Status | Job" >> "$ACTION_LOG"
+        echo "# --------------------------------------------------------------------" >> "$ACTION_LOG"
+    else
+        echo "" >> "$ACTION_LOG"
+        echo "# New Migration Session - $(date)" >> "$ACTION_LOG"
+        echo "# --------------------------------------------------------------------" >> "$ACTION_LOG"
+    fi
     
     # Parse servers configuration and get datacenters
     parse_servers_config

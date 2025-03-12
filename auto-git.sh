@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define project directory
-REPO_DIR="/home/amin/git_repos/Synchronize_Switch"
+REPO_DIR="$HOME/git_repos/Synchronize_Switch-automated"
 
 # Navigate to the project directory
 cd "$REPO_DIR" || { echo "Directory not found!"; exit 1; }

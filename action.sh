@@ -1,5 +1,5 @@
 #!/bin/bash
-export LC_TIME=en_US.UTF-8
+
 # Log file setup
 ACTION_LOG="$HOME/service_actions_$(date +%Y%m%d).log"
 
@@ -29,21 +29,42 @@ SELECTED_SERVICES=()
 NON_INTERACTIVE=false
 VERBOSE=false
 
+# Color definitions
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[0;37m'
+BOLD='\033[1m'
+UNDERLINE='\033[4m'
+NC='\033[0m' # No Color
+
+# UI elements
+HEADER_BG="${BLUE}${BOLD}"
+OPTION_COLOR="${CYAN}"
+SELECTED_COLOR="${GREEN}"
+ERROR_COLOR="${RED}${BOLD}"
+SUCCESS_COLOR="${GREEN}${BOLD}"
+HIGHLIGHT="${YELLOW}${BOLD}"
+INFO_COLOR="${MAGENTA}"
+
 # Parse command-line arguments
 usage() {
-    echo "Usage: $0 [OPTIONS]"
-    echo "Options:"
-    echo "  -s SOURCE_DC     Source datacenter name"
-    echo "  -d DEST_DC       Destination datacenter name"
-    echo "  -v SRC_VMS       Source VM numbers (comma-separated, e.g., '3,4,5' or 'all')"
-    echo "  -D DEST_VMS      Destination VM numbers (comma-separated, e.g., '1,2,6')"
-    echo "  -p PARALLEL      Maximum parallel jobs (default: 2)"
-    echo "  -r SERVICES      Services to migrate (comma-separated, e.g., 'binance,kucoin')"
-    echo "  -y               Non-interactive mode (skip confirmation prompts)"
-    echo "  -V               Verbose mode"
-    echo "  -h               Display this help message"
+    echo -e "${HEADER_BG}Usage:${NC} $0 [OPTIONS]"
+    echo -e "${BOLD}Options:${NC}"
+    echo -e "  ${OPTION_COLOR}-s${NC} SOURCE_DC     Source datacenter name"
+    echo -e "  ${OPTION_COLOR}-d${NC} DEST_DC       Destination datacenter name"
+    echo -e "  ${OPTION_COLOR}-v${NC} SRC_VMS       Source VM numbers (comma-separated, e.g., '3,4,5' or 'all')"
+    echo -e "  ${OPTION_COLOR}-D${NC} DEST_VMS      Destination VM numbers (comma-separated, e.g., '1,2,6')"
+    echo -e "  ${OPTION_COLOR}-p${NC} PARALLEL      Maximum parallel jobs (default: 1)"
+    echo -e "  ${OPTION_COLOR}-r${NC} SERVICES      Services to migrate (comma-separated, e.g., 'binance,kucoin')"
+    echo -e "  ${OPTION_COLOR}-y${NC}               Non-interactive mode (skip confirmation prompts)"
+    echo -e "  ${OPTION_COLOR}-V${NC}               Verbose mode"
+    echo -e "  ${OPTION_COLOR}-h${NC}               Display this help message"
     echo
-    echo "Example: $0 -s arvan -d cloudzy -v 3,4,5 -D 1,2,6 -p 3 -r binance -y"
+    echo -e "${BOLD}Example:${NC} $0 -s arvan -d cloudzy -v 3,4,5 -D 1,2,6 -p 3 -r binance,kucoin -y"
     exit 1
 }
 
@@ -78,6 +99,19 @@ while getopts "s:d:v:D:p:r:yVh" opt; do
             ;;
     esac
 done
+
+# Function for drawing boxes
+draw_box() {
+    local title="$1"
+    local width=80
+    local padding=$(( (width - ${#title}) / 2 ))
+    
+    echo -e "${HEADER_BG}"
+    printf '╭%s╮\n' "$(printf '═%.0s' $(seq 1 $((width-2))))"
+    printf '│%-*s%s%*s│\n' "$padding" " " "$title" "$((width - padding - ${#title}))" " "
+    printf '╰%s╯\n' "$(printf '═%.0s' $(seq 1 $((width-2))))"
+    echo -e "${NC}"
+}
 
 # Function for logging
 log() {
@@ -133,39 +167,11 @@ log_header() {
     echo "$line" | tee -a "$ACTION_LOG"
     echo "" | tee -a "$ACTION_LOG"
 }
-# Convert comma-separated VM list to digit string
-parse_vm_args() {
-    local input=$1
-    local max_vm=$2
-    local vm_choices=""
-    
-    # Handle 'all' option
-    if [[ "$input" == "all" ]]; then
-        for (( i=1; i<=$max_vm; i++ )); do
-            vm_choices="${vm_choices}${i}"
-        done
-        echo "$vm_choices"
-        return 0
-    fi
-    
-    # Convert comma-separated list to string of digits
-    IFS=',' read -ra VM_ARRAY <<< "$input"
-    for vm in "${VM_ARRAY[@]}"; do
-        # Validate each VM number
-        if [[ ! $vm =~ ^[1-9][0-9]*$ ]] || [[ $vm -gt $max_vm ]]; then
-            echo "error"
-            return 1
-        fi
-        vm_choices="${vm_choices}${vm}"
-    done
-    
-    echo "$vm_choices"
-}
 
 # Function to parse servers configuration
 parse_servers_config() {
     if [ ! -f "$SERVERS_CONF" ]; then
-        log "ERROR: Servers configuration file not found at $SERVERS_CONF"
+        echo -e "${ERROR_COLOR}ERROR: Servers configuration file not found at $SERVERS_CONF${NC}"
         exit 1
     fi
     
@@ -206,14 +212,14 @@ setup_ssh_connection() {
     # Check if connection is already established
     ssh -O check $SSH_MUX_OPTS -p $port $user@$host 2>/dev/null
     if [ $? -ne 0 ]; then
-        log "Setting up SSH connection" "$vm_name" "Started" "SSH Connection"
+        log "Setting up SSH connection" "$vm_name" "Started" "SSH Connection" "Establishing SSH connection" "$job_number"
         # Create a background connection that will persist
         ssh $SSH_OPTS -p $port -M -f -N $user@$host
         if [ $? -ne 0 ]; then
-            log "Setting up SSH connection" "$vm_name" "Failed" "SSH Connection"
+            log "Setting up SSH connection" "$vm_name" "Failed" "SSH Connection" "Establishing SSH connection" "$job_number"
             return 1
         fi
-        log "Setting up SSH connection" "$vm_name" "Completed" "SSH Connection"
+        log "Setting up SSH connection" "$vm_name" "Completed" "SSH Connection" "Establishing SSH connection" "$job_number"
     fi
     return 0
 }
@@ -225,9 +231,9 @@ close_ssh_connection() {
     local port=$3
     local vm_name=$4
     
-    log "Closing SSH connection" "$vm_name" "Started" "SSH Connection"
+    log "Closing SSH connection" "$vm_name" "Started" "SSH Connection" "Closing SSH connection" "$job_number"
     ssh -O exit $SSH_MUX_OPTS -p $port $user@$host 2>/dev/null
-    log "Closing SSH connection" "$vm_name" "Completed" "SSH Connection"
+    log "Closing SSH connection" "$vm_name" "Completed" "SSH Connection" "Closing SSH connection" "$job_number"
 }
 
 # Function to copy specific deployment scripts based on selected services
@@ -237,11 +243,13 @@ copy_deployment_scripts() {
     local port=$3
     local vm_name=$4
     local services=("${@:5}")
+    local job_number=${services[-1]}  # Last element is job number
+    unset 'services[-1]'            # Remove job number from services array
     
     # Create remote tmp directory in one shot
     ssh $SSH_OPTS -p $port $user@$host "mkdir -p $REMOTE_TMP_DIR"
     if [ $? -ne 0 ]; then
-        log "Create remote directory" "$vm_name" "Failed" "Copy Scripts"
+        log "Create remote directory" "$vm_name" "Failed" "Copy Scripts" "Creating remote directory" "$job_number"
         return 1
     fi
     
@@ -255,7 +263,7 @@ copy_deployment_scripts() {
            [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/start_all_${service}.sh" ] || \
            [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/stop_all_${service}.sh" ] || \
            [ ! -f "$DEPLOYMENT_SCRIPTS_PATH/purge_all_${service}.sh" ]; then
-            log "Missing required scripts for service $service" "$vm_name" "Failed" "Copy Scripts"
+            log "Missing required scripts" "$vm_name" "Failed" "Copy Scripts" "Missing scripts for service $service" "$job_number"
             return 1
         fi
         
@@ -268,19 +276,19 @@ copy_deployment_scripts() {
         
         scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/start_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
         if [ $? -ne 0 ]; then
-            log "Copy start script for $service" "$vm_name" "Failed" "Copy Scripts"
+            log "Copy start script" "$vm_name" "Failed" "Copy Scripts" "copy start_all_${service}.sh" "$job_number"
             return 1
         fi
         
         scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/stop_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
         if [ $? -ne 0 ]; then
-            log "Copy stop script for $service" "$vm_name" "Failed" "Copy Scripts"
+            log "Copy stop script" "$vm_name" "Failed" "Copy Scripts" "copy stop_all_${service}.sh" "$job_number"
             return 1
         fi
         
         scp $SSH_OPTS -P $port "$DEPLOYMENT_SCRIPTS_PATH/purge_all_${service}.sh" "$user@$host:$REMOTE_TMP_DIR/"
         if [ $? -ne 0 ]; then
-            log "Copy purge script for $service" "$vm_name" "Failed" "Copy Scripts"
+            log "Copy purge script" "$vm_name" "Failed" "Copy Scripts" "copy purge_all_${service}.sh" "$job_number"
             return 1
         fi
     done
@@ -288,7 +296,7 @@ copy_deployment_scripts() {
     # Make scripts executable
     ssh $SSH_OPTS -p $port $user@$host "chmod +x $REMOTE_TMP_DIR/*.sh"
     if [ $? -ne 0 ]; then
-        log "Make scripts executable" "$vm_name" "Failed" "Copy Scripts"
+        log "Make scripts executable" "$vm_name" "Failed" "Copy Scripts" "Making scripts executable" "$job_number"
         return 1
     fi
     
@@ -305,6 +313,7 @@ execute_action() {
     local target_path=$5
     local vm_name=$6
     local service=$7
+    local job_number=$8
     
     case $action_num in
         1)
@@ -324,7 +333,7 @@ execute_action() {
             action_name="Purge ${service^} Service"
             ;;
         *)
-            log "ERROR: Invalid action number: $action_num"
+            log "ERROR: Invalid action number: $action_num" "" "" "" "" "$job_number"
             return 1
             ;;
     esac
@@ -339,7 +348,7 @@ execute_action() {
         log "$action_num" "$vm_name" "Completed" "$action_name" "$action_name" "$job_number"
     else
         log "$action_num" "$vm_name" "Failed" "$action_name" "$action_name" "$job_number"
-        echo "ERROR: Action $action_num ($action_name) failed on $vm_name"
+        echo -e "${ERROR_COLOR}ERROR: Action $action_num ($action_name) failed on $vm_name${NC}"
         return 1
     fi
 }
@@ -362,7 +371,7 @@ process_migration_job() {
     
     # Get source VM details
     if ! get_server_details "$source_datacenter" "$SOURCE_VM"; then
-        log "ERROR: Failed to get details for source VM $SOURCE_VM in $source_datacenter"
+        log "ERROR: Failed to get details for source VM $SOURCE_VM in $source_datacenter" "" "" "" "" "$job_number"
         return 1
     fi
     
@@ -377,7 +386,7 @@ process_migration_job() {
     
     # Get destination VM details
     if ! get_server_details "$dest_datacenter" "$DEST_VM"; then
-        log "ERROR: Failed to get details for destination VM $DEST_VM in $dest_datacenter"
+        log "ERROR: Failed to get details for destination VM $DEST_VM in $dest_datacenter" "" "" "" "" "$job_number"
         return 1
     fi
     
@@ -387,51 +396,58 @@ process_migration_job() {
     DEST_PORT=$PORT
     DEST_PATH="/home/$USERNAME/"
     
-    echo -e "\nJob #$job_number Configuration:"
-    echo "Source: $source_datacenter - $SOURCE_VM ($SOURCE_HOST)"
-    echo "Destination: $dest_datacenter - $DEST_VM ($DEST_HOST)"
-    echo "Service: $service"
+    echo -e "\n${HEADER_BG}Job #$job_number Configuration:${NC}"
+    echo -e "${INFO_COLOR}Source:${NC} $source_datacenter - $SOURCE_VM ($SOURCE_HOST)"
+    echo -e "${INFO_COLOR}Destination:${NC} $dest_datacenter - $DEST_VM ($DEST_HOST)"
+    echo -e "${INFO_COLOR}Services:${NC} ${services[*]}"
     
     # Setup SSH connections once for both source and destination
     setup_ssh_connection "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_VM"
     setup_ssh_connection "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_VM"
     
+    # Add job number to services array for logging
+    local services_with_job=("${services[@]}" "$job_number")
+    
     # Copy deployment scripts for all selected services to both servers
-    copy_deployment_scripts "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_VM" "${services[@]}"
-    copy_deployment_scripts "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_VM" "${services[@]}"
-
+    copy_deployment_scripts "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_VM" "${services_with_job[@]}"
+    copy_deployment_scripts "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_VM" "${services_with_job[@]}"
+    
     # Process each service
     local all_success=true
     for service in "${services[@]}"; do
-        echo -e "\nProcessing service: ${service^}"
+        echo -e "\n${HIGHLIGHT}Processing service: ${service^}${NC}"
         
         # Execute actions on destination VM (deploy and start)
-        echo -e "Executing actions on Destination VM ($DEST_VM)..."
+        echo -e "${INFO_COLOR}Executing actions on Destination VM ($DEST_VM)...${NC}"
         local dest_success=true
         for action in 1 2; do
-            echo -e "Executing step $action on Destination VM (${service^} service)"
-            if ! execute_action $action "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_PATH" "$DEST_VM" "$service"; then
-                echo "Sequence failed at step $action on Destination VM"
+            echo -e "  ➤ Executing step $action on Destination VM (${service^} service)"
+            if ! execute_action $action "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_PATH" "$DEST_VM" "$service" "$job_number"; then
+                echo -e "${ERROR_COLOR}  ✗ Sequence failed at step $action on Destination VM${NC}"
                 dest_success=false
                 all_success=false
                 break
+            else
+                echo -e "${SUCCESS_COLOR}  ✓ Step $action completed successfully${NC}"
             fi
         done
         
         # Only continue to source VM actions if destination was successful
         if $dest_success; then
             # 5-second pause between destination and source actions
-            echo "Pausing for 5 seconds before proceeding to source VM actions..."
+            echo -e "${INFO_COLOR}Pausing for 5 seconds before proceeding to source VM actions...${NC}"
             sleep 5
             
             # Execute actions on source VM (stop and purge)
-            echo -e "Executing actions on Source VM ($SOURCE_VM)..."
+            echo -e "${INFO_COLOR}Executing actions on Source VM ($SOURCE_VM)...${NC}"
             for action in 3 4; do
-                echo -e "Executing step $action on Source VM (${service^} service)"
-                if ! execute_action $action "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_PATH" "$SOURCE_VM" "$service"; then
-                    echo "Sequence failed at step $action on Source VM"
+                echo -e "  ➤ Executing step $action on Source VM (${service^} service)"
+                if ! execute_action $action "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_PATH" "$SOURCE_VM" "$service" "$job_number"; then
+                    echo -e "${ERROR_COLOR}  ✗ Sequence failed at step $action on Source VM${NC}"
                     all_success=false
                     break
+                else
+                    echo -e "${SUCCESS_COLOR}  ✓ Step $action completed successfully${NC}"
                 fi
             done
         fi
@@ -441,11 +457,11 @@ process_migration_job() {
     close_ssh_connection "$SOURCE_USER" "$SOURCE_HOST" "$SOURCE_PORT" "$SOURCE_VM"
     close_ssh_connection "$DEST_USER" "$DEST_HOST" "$DEST_PORT" "$DEST_VM"
     
-    if $dest_success; then
-        echo -e "Job #$job_number completed successfully!\n"
+    if $all_success; then
+        echo -e "\n${SUCCESS_COLOR}Job #$job_number completed successfully!${NC}\n"
         return 0
     else
-        echo -e "Job #$job_number failed!\n"
+        echo -e "\n${ERROR_COLOR}Job #$job_number failed!${NC}\n"
         return 1
     fi
 }
@@ -456,7 +472,7 @@ process_parallel_jobs() {
     local dest_datacenter=$2
     local source_vm_choices=$3
     local dest_vm_choices=$4
-    local max_parallel_jobs=${MAX_PARALLEL_JOBS:-2}
+    local max_parallel_jobs=${MAX_PARALLEL_JOBS:-1}
     
     local active_jobs=0
     local job_pids=()
@@ -469,12 +485,12 @@ process_parallel_jobs() {
         local dst_vm_index=$((dst_choice-1))
         local job_number=$((i+1))
         
-        echo -e "\n======================================================="
-        echo "Starting migration job #$job_number:"
-        echo "Source VM: ${SOURCE_VMS[$src_vm_index]}"
-        echo "Destination VM: ${DEST_VMS[$dst_vm_index]}"
-        echo "Service: ${service^}"
-        echo "======================================================="
+        echo -e "\n${HEADER_BG}╭───────────────────────────────────────────────────────────╮${NC}"
+        echo -e "${HEADER_BG}│           Starting Migration Job #$job_number                       │${NC}"
+        echo -e "${HEADER_BG}╰───────────────────────────────────────────────────────────╯${NC}"
+        echo -e "${HIGHLIGHT}Source VM:${NC} ${SOURCE_VMS[$src_vm_index]}"
+        echo -e "${HIGHLIGHT}Destination VM:${NC} ${DEST_VMS[$dst_vm_index]}"
+        echo -e "${HIGHLIGHT}Services:${NC} ${SELECTED_SERVICES[*]^}"
         
         # Run the job in background
         (process_migration_job "$job_number" "$source_datacenter" "$dest_datacenter" "$src_vm_index" "$dst_vm_index" "${SELECTED_SERVICES[@]}" "${SOURCE_VMS[@]}") &
@@ -485,6 +501,7 @@ process_parallel_jobs() {
         
         # Wait if we've reached the maximum number of parallel jobs
         if [[ $active_jobs -ge $max_parallel_jobs ]]; then
+            echo -e "${INFO_COLOR}Waiting for a job to complete before starting more...${NC}"
             # Wait for any job to finish
             wait -n
             
@@ -496,13 +513,13 @@ process_parallel_jobs() {
                     local status=$?
                     
                     if [[ $status -ne 0 ]]; then
-                        echo "Migration job #${job_numbers[$j]} failed!"
-                        log "Migration job #${job_numbers[$j]} failed!"
+                        echo -e "${ERROR_COLOR}Migration job #${job_numbers[$j]} failed!${NC}"
+                        log "Migration job #${job_numbers[$j]} failed!" "" "" "" "" "$job_number"
                         
                         if [[ "$NON_INTERACTIVE" == "false" ]]; then
-                            read -p "Continue with remaining jobs? (y/n): " continue_choice
+                            read -p "$(echo -e ${BOLD}Continue with remaining jobs? \(y/n\): ${NC})" continue_choice
                             if [[ $continue_choice != "y" && $continue_choice != "Y" ]]; then
-                                log "Operation cancelled by user after job #${job_numbers[$j]} failure"
+                                log "Operation cancelled by user after job #${job_numbers[$j]} failure" "" "" "" "" "$job_number"
                                 
                                 # Kill all remaining jobs
                                 for pid in "${job_pids[@]}"; do
@@ -513,7 +530,7 @@ process_parallel_jobs() {
                             fi
                         else
                             # In non-interactive mode, continue by default
-                            log "Continuing with remaining jobs after failure (non-interactive mode)"
+                            log "Continuing with remaining jobs after failure (non-interactive mode)" "" "" "" "" "$job_number"
                         fi
                     fi
                     
@@ -530,14 +547,18 @@ process_parallel_jobs() {
         fi
     done
     
+    if [[ $active_jobs -gt 0 ]]; then
+        echo -e "${INFO_COLOR}Waiting for remaining jobs to complete...${NC}"
+    fi
+    
     # Wait for all remaining jobs to finish
     for (( j=0; j<${#job_pids[@]}; j++ )); do
         wait ${job_pids[$j]}
         local status=$?
         
         if [[ $status -ne 0 ]]; then
-            echo "Migration job #${job_numbers[$j]} failed!"
-            log "Migration job #${job_numbers[$j]} failed!"
+            echo -e "${ERROR_COLOR}Migration job #${job_numbers[$j]} failed!${NC}"
+            log "Migration job #${job_numbers[$j]} failed!" "" "" "" "" ""
         fi
     done
     
@@ -592,6 +613,35 @@ convert_all_vms() {
     echo "$vm_choices"
 }
 
+# Convert comma-separated VM list to digit string
+parse_vm_args() {
+    local input=$1
+    local max_vm=$2
+    local vm_choices=""
+    
+    # Handle 'all' option
+    if [[ "$input" == "all" ]]; then
+        for (( i=1; i<=$max_vm; i++ )); do
+            vm_choices="${vm_choices}${i}"
+        done
+        echo "$vm_choices"
+        return 0
+    fi
+    
+    # Convert comma-separated list to string of digits
+    IFS=',' read -ra VM_ARRAY <<< "$input"
+    for vm in "${VM_ARRAY[@]}"; do
+        # Validate each VM number
+        if [[ ! $vm =~ ^[1-9][0-9]*$ ]] || [[ $vm -gt $max_vm ]]; then
+            echo "error"
+            return 1
+        fi
+        vm_choices="${vm_choices}${vm}"
+    done
+    
+    echo "$vm_choices"
+}
+
 # Main script execution
 main() {
     # Append to log file if it exists, create it if it doesn't
@@ -606,7 +656,20 @@ main() {
         echo "# --------------------------------------------------------------------" >> "$ACTION_LOG"
     fi
     
+    # Clear screen for better UI
+    clear
+    
+    # Draw title banner
+    echo -e "${HEADER_BG}"
+    echo -e "╭────────────────────────────────────────────────────────────────────────────╮"
+    echo -e "│                                                                            │"
+    echo -e "│                    ADVANCED SERVICE MIGRATION TOOL                         │"
+    echo -e "│                                                                            │"
+    echo -e "╰────────────────────────────────────────────────────────────────────────────╯"
+    echo -e "${NC}"
+    
     # Parse servers configuration and get datacenters
+    echo -e "${INFO_COLOR}Loading configuration...${NC}"
     parse_servers_config
     
     # Verify the required parameters for automated mode
@@ -619,8 +682,8 @@ main() {
     # Process SOURCE_DATACENTER
     if [[ -n "$SOURCE_DATACENTER" ]]; then
         if ! validate_datacenter "$SOURCE_DATACENTER"; then
-            echo "ERROR: Invalid source datacenter: $SOURCE_DATACENTER"
-            echo "Available datacenters:"
+            echo -e "${ERROR_COLOR}ERROR: Invalid source datacenter: $SOURCE_DATACENTER${NC}"
+            echo -e "${INFO_COLOR}Available datacenters:${NC}"
             for dc in "${DATACENTERS[@]}"; do
                 echo "  $dc"
             done
@@ -641,8 +704,8 @@ main() {
     # Process DEST_DATACENTER
     if [[ -n "$DEST_DATACENTER" ]]; then
         if ! validate_datacenter "$DEST_DATACENTER"; then
-            echo "ERROR: Invalid destination datacenter: $DEST_DATACENTER"
-            echo "Available datacenters:"
+            echo -e "${ERROR_COLOR}ERROR: Invalid destination datacenter: $DEST_DATACENTER${NC}"
+            echo -e "${INFO_COLOR}Available datacenters:${NC}"
             for dc in "${DATACENTERS[@]}"; do
                 echo "  $dc"
             done
@@ -675,8 +738,8 @@ main() {
         source_vm_choices=$(parse_vm_args "$SOURCE_VM_INPUT" "${#SOURCE_VMS[@]}")
         
         if [[ "$source_vm_choices" == "error" ]]; then
-            echo "ERROR: Invalid source VM format: $SOURCE_VM_INPUT"
-            echo "Must be comma-separated numbers (e.g., '3,4,5') or 'all'"
+            echo -e "${ERROR_COLOR}ERROR: Invalid source VM format: $SOURCE_VM_INPUT${NC}"
+            echo -e "${INFO_COLOR}Must be comma-separated numbers (e.g., '3,4,5') or 'all'${NC}"
             auto_mode_valid=false
         fi
     else
@@ -689,14 +752,14 @@ main() {
         dest_vm_choices=$(parse_vm_args "$DEST_VM_INPUT" "${#DEST_VMS[@]}")
         
         if [[ "$dest_vm_choices" == "error" ]]; then
-            echo "ERROR: Invalid destination VM format: $DEST_VM_INPUT"
-            echo "Must be comma-separated numbers (e.g., '1,2,6')"
+            echo -e "${ERROR_COLOR}ERROR: Invalid destination VM format: $DEST_VM_INPUT${NC}"
+            echo -e "${INFO_COLOR}Must be comma-separated numbers (e.g., '1,2,6')${NC}"
             auto_mode_valid=false
         else
             # Check if destination VM count matches source VM count
             if [[ ${#dest_vm_choices} -ne ${#source_vm_choices} ]]; then
-                echo "ERROR: Source and destination VM lists must have the same length"
-                echo "Source VMs: ${#source_vm_choices} entries, Destination VMs: ${#dest_vm_choices} entries"
+                echo -e "${ERROR_COLOR}ERROR: Source and destination VM lists must have the same length${NC}"
+                echo -e "${INFO_COLOR}Source VMs: ${#source_vm_choices} entries, Destination VMs: ${#dest_vm_choices} entries${NC}"
                 auto_mode_valid=false
             fi
             
@@ -707,8 +770,8 @@ main() {
                     local dst_choice=${dest_vm_choices:$i:1}
                     
                     if [[ $src_choice -eq $dst_choice ]]; then
-                        echo "ERROR: Source and destination VMs cannot be the same when using the same datacenter"
-                        echo "Problem detected: VM #$src_choice is used as both source and destination"
+                        echo -e "${ERROR_COLOR}ERROR: Source and destination VMs cannot be the same when using the same datacenter${NC}"
+                        echo -e "${INFO_COLOR}Problem detected: VM #$src_choice is used as both source and destination${NC}"
                         auto_mode_valid=false
                         break
                     fi
@@ -723,8 +786,8 @@ main() {
     if [[ ${#SELECTED_SERVICES[@]} -gt 0 ]]; then
         for service in "${SELECTED_SERVICES[@]}"; do
             if ! validate_service "$service"; then
-                echo "ERROR: Invalid service: $service"
-                echo "Available services:"
+                echo -e "${ERROR_COLOR}ERROR: Invalid service: $service${NC}"
+                echo -e "${INFO_COLOR}Available services:${NC}"
                 for svc in "${SERVICES[@]}"; do
                     echo "  $svc"
                 done
@@ -744,51 +807,58 @@ main() {
     # Validate MAX_PARALLEL_JOBS
     if [[ -n "$MAX_PARALLEL_JOBS" ]]; then
         if [[ ! $MAX_PARALLEL_JOBS =~ ^[1-9][0-9]*$ ]]; then
-            echo "ERROR: Invalid maximum parallel jobs: $MAX_PARALLEL_JOBS"
-            echo "Must be a positive integer"
-            MAX_PARALLEL_JOBS=2
-            echo "Using default value: $MAX_PARALLEL_JOBS"
+            echo -e "${ERROR_COLOR}ERROR: Invalid maximum parallel jobs: $MAX_PARALLEL_JOBS${NC}"
+            echo -e "${INFO_COLOR}Must be a positive integer${NC}"
+            MAX_PARALLEL_JOBS=1
+            echo -e "${INFO_COLOR}Using default value: $MAX_PARALLEL_JOBS${NC}"
         fi
     else
-        MAX_PARALLEL_JOBS=2
+        MAX_PARALLEL_JOBS=1
     fi
     
     # Interactive mode if not all parameters are valid or provided
     if [[ "$auto_mode_valid" == "false" ]]; then
         # Display datacenter options
-        echo "Available Datacenters:"
+        draw_box "DATACENTER SELECTION"
+        echo -e "${HIGHLIGHT}Available Datacenters:${NC}"
         for i in "${!DATACENTERS[@]}"; do
-            echo "$((i+1)). ${DATACENTERS[i]}"
+            echo -e "  ${OPTION_COLOR}$((i+1)).${NC} ${DATACENTERS[i]}"
         done
+        echo
 
         # Select source datacenter if not valid from command line
         if [[ $source_dc_index -lt 0 ]]; then
             while true; do
-                read -p "Select source datacenter (1-${#DATACENTERS[@]}): " source_dc_choice
+                read -p "$(echo -e ${BOLD}Select source datacenter \(1-${#DATACENTERS[@]}\): ${NC})" source_dc_choice
                 if [[ $source_dc_choice =~ ^[1-${#DATACENTERS[@]}]$ ]]; then
                     SOURCE_DATACENTER=${DATACENTERS[$((source_dc_choice-1))]}
                     break
                 else
-                    echo "Invalid choice. Please try again."
+                    echo -e "${ERROR_COLOR}Invalid choice. Please try again.${NC}"
                 fi
             done
         else
-            echo "Using source datacenter: $SOURCE_DATACENTER"
+            echo -e "${SELECTED_COLOR}Using source datacenter: $SOURCE_DATACENTER${NC}"
         fi
 
         # Select destination datacenter if not valid from command line
         if [[ $dest_dc_index -lt 0 ]]; then
             while true; do
-                read -p "Select destination datacenter (1-${#DATACENTERS[@]}): " dest_dc_choice
+                read -p "$(echo -e ${BOLD}Select destination datacenter \(1-${#DATACENTERS[@]}\): ${NC})" dest_dc_choice
                 if [[ $dest_dc_choice =~ ^[1-${#DATACENTERS[@]}]$ ]]; then
                     DEST_DATACENTER=${DATACENTERS[$((dest_dc_choice-1))]}
-                    break
+                    # Ensure destination is different from source
+                    if [ "$DEST_DATACENTER" != "$SOURCE_DATACENTER" ]; then
+                        break
+                    else
+                        echo -e "${ERROR_COLOR}Destination datacenter must be different from source. Please try again.${NC}"
+                    fi
                 else
-                    echo "Invalid choice. Please try again."
+                    echo -e "${ERROR_COLOR}Invalid choice. Please try again.${NC}"
                 fi
             done
         else
-            echo "Using destination datacenter: $DEST_DATACENTER"
+            echo -e "${SELECTED_COLOR}Using destination datacenter: $DEST_DATACENTER${NC}"
         fi
 
         # Get VMs for source datacenter
@@ -798,88 +868,65 @@ main() {
         DEST_VMS=($(get_datacenter_vms "$DEST_DATACENTER"))
 
         # Display source VM options with "all" option
-        echo "Available Source VMs:"
+        echo
+        draw_box "VM SELECTION"
+        echo -e "${HIGHLIGHT}Available Source VMs:${NC}"
         for i in "${!SOURCE_VMS[@]}"; do
-            echo "$((i+1)). ${SOURCE_VMS[i]}"
+            echo -e "  ${OPTION_COLOR}$((i+1)).${NC} ${SOURCE_VMS[i]}"
         done
-        echo "$((${#SOURCE_VMS[@]}+1)). all"
+        echo -e "  ${OPTION_COLOR}$((${#SOURCE_VMS[@]}+1)).${NC} all"
+        echo
 
         # Select source VMs if not valid from command line
         if [[ -z "$source_vm_choices" ]]; then
             while true; do
-                read -p "Select source VMs (enter digits without spaces, e.g. 614 for VMs 6, 1, and 4, or select 'all'): " source_vm_input
+                read -p "$(echo -e ${BOLD}Select source VMs \(comma-separated, e.g. 6,1,4 for VMs 6, 1, and 4, or 'all'\): ${NC})" source_vm_input
                 
                 # Check if user selected "all"
-                if [[ $source_vm_input =~ ^[aA][lL][lL]$ ]] || [[ $source_vm_input -eq $((${#SOURCE_VMS[@]}+1)) ]]; then
-                    # Generate sequence for all VMs: "123456..." up to the number of VMs
+                if [[ $source_vm_input == "all" ]]; then
                     source_vm_choices=$(convert_all_vms "${#SOURCE_VMS[@]}")
                     break
                 fi
                 
-                # Validate input - only digits allowed
-                if [[ ! $source_vm_input =~ ^[1-9]+$ ]]; then
-                    echo "Invalid input. Please enter only digits corresponding to VM numbers."
+                # Convert and validate comma-separated VM input
+                source_vm_choices=$(parse_vm_args "$source_vm_input" "${#SOURCE_VMS[@]}")
+                
+                if [[ "$source_vm_choices" == "error" ]]; then
+                    echo -e "${ERROR_COLOR}Invalid input. Please enter valid VM numbers (1-${#SOURCE_VMS[@]}).${NC}"
                     continue
                 fi
                 
-                # Validate that all digits are valid VM indices
-                local invalid_choice=false
-                for (( i=0; i<${#source_vm_input}; i++ )); do
-                    local choice=${source_vm_input:$i:1}
-                    if [[ $choice -gt ${#SOURCE_VMS[@]} ]]; then
-                        echo "Invalid choice: $choice. Maximum is ${#SOURCE_VMS[@]}."
-                        invalid_choice=true
-                        break
-                    fi
-                done
-                
-                if [ "$invalid_choice" = true ]; then
-                    continue
-                fi
-                
-                source_vm_choices=$source_vm_input
                 break
             done
         else
-            echo "Using source VMs: $source_vm_choices"
+            echo -e "${SELECTED_COLOR}Using source VMs: $source_vm_choices${NC}"
         fi
         
         # Display destination VM options with "all" option
-        echo "Available Destination VMs:"
+        echo
+        echo -e "${HIGHLIGHT}Available Destination VMs:${NC}"
         for i in "${!DEST_VMS[@]}"; do
-            echo "$((i+1)). ${DEST_VMS[i]}"
+            echo -e "  ${OPTION_COLOR}$((i+1)).${NC} ${DEST_VMS[i]}"
         done
+        echo
         
         # Select destination VMs
         if [[ -z "$dest_vm_choices" ]]; then
             while true; do
-                read -p "Select destination VMs (enter digits without spaces, e.g. 614 for VMs 6, 1, and 4): " dest_vm_input
+                read -p "$(echo -e ${BOLD}Select destination VMs \(comma-separated, e.g. 6,1,4 for VMs 6, 1, and 4\): ${NC})" dest_vm_input
                 
-                # Validate input - only digits allowed
-                if [[ ! $dest_vm_input =~ ^[1-9]+$ ]]; then
-                    echo "Invalid input. Please enter only digits corresponding to VM numbers."
+                # Convert and validate comma-separated VM input
+                dest_vm_choices=$(parse_vm_args "$dest_vm_input" "${#DEST_VMS[@]}")
+                
+                if [[ "$dest_vm_choices" == "error" ]]; then
+                    echo -e "${ERROR_COLOR}Invalid input. Please enter valid VM numbers (1-${#DEST_VMS[@]}).${NC}"
                     continue
                 fi
                 
                 # Check if destination VM count matches source VM count
-                if [[ ${#dest_vm_input} -ne ${#source_vm_choices} ]]; then
-                    echo "Error: The number of destination VMs must match the number of source VMs."
-                    echo "You selected ${#source_vm_choices} source VMs but ${#dest_vm_input} destination VMs."
-                    continue
-                fi
-                
-                # Validate that all digits are valid VM indices
-                local invalid_choice=false
-                for (( i=0; i<${#dest_vm_input}; i++ )); do
-                    local choice=${dest_vm_input:$i:1}
-                    if [[ $choice -gt ${#DEST_VMS[@]} ]]; then
-                        echo "Invalid choice: $choice. Maximum is ${#DEST_VMS[@]}."
-                        invalid_choice=true
-                        break
-                    fi
-                done
-                
-                if [ "$invalid_choice" = true ]; then
+                if [[ ${#dest_vm_choices} -ne ${#source_vm_choices} ]]; then
+                    echo -e "${ERROR_COLOR}Error: The number of destination VMs must match the number of source VMs.${NC}"
+                    echo -e "${INFO_COLOR}You selected ${#source_vm_choices} source VMs but ${#dest_vm_choices} destination VMs.${NC}"
                     continue
                 fi
                 
@@ -888,11 +935,11 @@ main() {
                     local overlap_detected=false
                     for (( i=0; i<${#source_vm_choices}; i++ )); do
                         local src_choice=${source_vm_choices:$i:1}
-                        local dst_choice=${dest_vm_input:$i:1}
+                        local dst_choice=${dest_vm_choices:$i:1}
                         
                         if [[ $src_choice -eq $dst_choice ]]; then
-                            echo "Error: Source and destination VMs cannot be the same when using the same datacenter."
-                            echo "Problem detected: VM #$src_choice (${SOURCE_VMS[$((src_choice-1))]})"
+                            echo -e "${ERROR_COLOR}Error: Source and destination VMs cannot be the same when using the same datacenter.${NC}"
+                            echo -e "${INFO_COLOR}Problem detected: VM #$src_choice (${SOURCE_VMS[$((src_choice-1))]})"
                             overlap_detected=true
                             break
                         fi
@@ -903,42 +950,26 @@ main() {
                     fi
                 fi
                 
-                dest_vm_choices=$dest_vm_input
                 break
             done
         else
-            echo "Using destination VMs: $dest_vm_choices"
-        fi
-        
-        # Ask for parallel job count
-        if [[ "$auto_mode_valid" == "false" ]]; then
-            read -p "Enter maximum number of parallel jobs [1]: " MAX_PARALLEL_JOBS
-            MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-1}  # Default to 1 if empty
-            
-            # Validate input for parallel jobs
-            if [[ ! $MAX_PARALLEL_JOBS =~ ^[1-9][0-9]*$ ]]; then
-                echo "Invalid input. Using default value of 1 parallel job."
-                MAX_PARALLEL_JOBS=1
-            fi
-        else
-            # For automated mode
-            if [[ -z "$MAX_PARALLEL_JOBS" ]]; then
-                MAX_PARALLEL_JOBS=1
-            fi
-            echo "Using maximum parallel jobs: $MAX_PARALLEL_JOBS"
+            echo -e "${SELECTED_COLOR}Using destination VMs: $dest_vm_choices${NC}"
         fi
         
         # Display service options if not provided
+        echo
+        draw_box "SERVICE SELECTION" 
+        echo -e "${HIGHLIGHT}Available Services:${NC}"
+        for i in "${!SERVICES[@]}"; do
+            echo -e "  ${OPTION_COLOR}$((i+1)).${NC} ${SERVICES[i]}"
+        done
+        echo -e "  ${OPTION_COLOR}$((${#SERVICES[@]}+1)).${NC} all"
+        echo
+        
+        # Select services
         if [[ ${#SELECTED_SERVICES[@]} -eq 0 ]]; then
-            echo -e "\nAvailable Services:"
-            for i in "${!SERVICES[@]}"; do
-                echo "$((i+1)). ${SERVICES[i]}"
-            done
-            echo "$((${#SERVICES[@]}+1)). all"
-            
-            # Select services
             while true; do
-                read -p "Select services (digits without spaces, e.g. 12 for services 1 and 2, or select 'all'): " service_choice
+                read -p "$(echo -e ${BOLD}Select services \(digits without spaces, e.g. 12 for services 1 and 2, or select 'all'\): ${NC})" service_choice
                 
                 # Check if user selected "all"
                 if [[ $service_choice =~ ^[aA][lL][lL]$ ]] || [[ $service_choice -eq $((${#SERVICES[@]}+1)) ]]; then
@@ -948,7 +979,7 @@ main() {
                 
                 # Validate input - only digits allowed
                 if [[ ! $service_choice =~ ^[1-9]+$ ]]; then
-                    echo "Invalid input. Please enter only digits corresponding to service numbers."
+                    echo -e "${ERROR_COLOR}Invalid input. Please enter only digits corresponding to service numbers.${NC}"
                     continue
                 fi
                 
@@ -958,7 +989,7 @@ main() {
                 for (( i=0; i<${#service_choice}; i++ )); do
                     local choice=${service_choice:$i:1}
                     if [[ $choice -gt ${#SERVICES[@]} ]]; then
-                        echo "Invalid choice: $choice. Maximum is ${#SERVICES[@]}."
+                        echo -e "${ERROR_COLOR}Invalid choice: $choice. Maximum is ${#SERVICES[@]}.${NC}"
                         invalid_choice=true
                         break
                     fi
@@ -972,17 +1003,38 @@ main() {
                 break
             done
         else
-            echo "Using services: ${SELECTED_SERVICES[*]}"
+            echo -e "${SELECTED_COLOR}Using services: ${SELECTED_SERVICES[*]}${NC}"
+        fi
+        
+        # Ask for parallel job count
+        echo
+        draw_box "PARALLEL JOBS" 
+        if [[ "$auto_mode_valid" == "false" ]]; then
+            read -p "$(echo -e ${BOLD}Enter maximum number of parallel jobs [1]: ${NC})" MAX_PARALLEL_JOBS
+            MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-1}  # Default to 1 if empty
+            
+            # Validate input for parallel jobs
+            if [[ ! $MAX_PARALLEL_JOBS =~ ^[1-9][0-9]*$ ]]; then
+                echo -e "${ERROR_COLOR}Invalid input. Using default value of 1 parallel job.${NC}"
+                MAX_PARALLEL_JOBS=1
+            fi
+        else
+            # For automated mode
+            if [[ -z "$MAX_PARALLEL_JOBS" ]]; then
+                MAX_PARALLEL_JOBS=1
+            fi
+            echo -e "${SELECTED_COLOR}Using maximum parallel jobs: $MAX_PARALLEL_JOBS${NC}"
         fi
     fi
 
     # Show configuration summary and get final approval
-    echo -e "\nConfiguration Summary:"
-    echo "Source datacenter: $SOURCE_DATACENTER"
-    echo "Destination datacenter: $DEST_DATACENTER"
-    echo "Maximum parallel jobs: $MAX_PARALLEL_JOBS"
-    echo "Selected services: ${SELECTED_SERVICES[*]^}"
-    echo -e "\nVM Mappings:"
+    echo
+    draw_box "CONFIGURATION SUMMARY"
+    echo -e "${HIGHLIGHT}Source datacenter:${NC} $SOURCE_DATACENTER"
+    echo -e "${HIGHLIGHT}Destination datacenter:${NC} $DEST_DATACENTER"
+    echo -e "${HIGHLIGHT}Maximum parallel jobs:${NC} $MAX_PARALLEL_JOBS"
+    echo -e "${HIGHLIGHT}Selected services:${NC} ${SELECTED_SERVICES[*]^}"
+    echo -e "\n${HIGHLIGHT}VM Mappings:${NC}"
     
     for (( i=0; i<${#source_vm_choices}; i++ )); do
         local src_choice=${source_vm_choices:$i:1}
@@ -990,28 +1042,35 @@ main() {
         local src_vm_index=$((src_choice-1))
         local dst_vm_index=$((dst_choice-1))
         
-        echo "  ${SOURCE_VMS[$src_vm_index]} → ${DEST_VMS[$dst_vm_index]}"
+        echo -e "  ${SOURCE_VMS[$src_vm_index]} ${CYAN}→${NC} ${DEST_VMS[$dst_vm_index]}"
     done
     
     # Get confirmation in interactive mode
     if [[ "$NON_INTERACTIVE" == "false" ]]; then
-        read -p "Continue? (y/n): " confirm
+        echo
+        read -p "$(echo -e ${BOLD}Continue? \(y/n\): ${NC})" confirm
         if [[ $confirm != "y" && $confirm != "Y" ]]; then
             log "Operation cancelled by user"
+            echo -e "${INFO_COLOR}Operation cancelled by user${NC}"
             exit 0
         fi
     else
-        echo "Running in non-interactive mode. Proceeding without confirmation..."
+        echo -e "\n${INFO_COLOR}Running in non-interactive mode. Proceeding without confirmation...${NC}"
     fi
 
     # Process migration jobs in parallel
+    echo
+    draw_box "EXECUTING MIGRATION JOBS"
+    echo -e "${INFO_COLOR}Starting migration process...${NC}"
     process_parallel_jobs "$SOURCE_DATACENTER" "$DEST_DATACENTER" "$source_vm_choices" "$dest_vm_choices"
 
     # Log completion
     log_header "All Service Transfer Operations Completed"
     
-    echo -e "\nAll migration jobs completed!"
-    echo "Action log: $ACTION_LOG"
+    echo
+    draw_box "MIGRATION COMPLETED"
+    echo -e "${SUCCESS_COLOR}All migration jobs completed!${NC}"
+    echo -e "${INFO_COLOR}Action log: $ACTION_LOG${NC}"
 }
 
 # Run the main script

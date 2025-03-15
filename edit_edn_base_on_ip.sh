@@ -7,23 +7,60 @@ SERVERS_CONF="$INFO_PATH/servers.conf"
 MAX_PARALLEL=6  # Maximum number of parallel processes
 SSH_OPTS="-o StrictHostKeyChecking=no"  # SSH options for automation
 
+# ANSI color and formatting codes
+BLUE='\033[38;5;75m'      # Pastel blue
+CYAN='\033[38;5;81m'      # Pastel cyan
+GRAY='\033[38;5;240m'     # Gray for secondary info
+GREEN='\033[38;5;114m'    # Pastel green for success
+YELLOW='\033[38;5;221m'   # Pastel yellow for warnings
+RED='\033[38;5;203m'      # Pastel red for errors
+BOLD='\033[1m'
+ITALIC='\033[3m'
+RESET='\033[0m'
+
+# UI Helper functions
+print_header() {
+    local text="$1"
+    local width=60
+    echo ""
+    echo -e "${BOLD}${BLUE}${text}${RESET}"
+    echo -e "${GRAY}$(printf '%.0s─' $(seq 1 $width))${RESET}"
+}
+
+print_spinner() {
+    local pid=$1
+    local message="$2"
+    local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local charwidth=${#spin}
+    
+    while kill -0 $pid 2>/dev/null; do
+        local i=$(( (i + 1) % $charwidth ))
+        printf "\r${GRAY}%s${RESET} ${CYAN}%s${RESET} " "$message" "${spin:$i:1}"
+        sleep .1
+    done
+    printf "\r${GRAY}%s${RESET} ${GREEN}✓${RESET}  \n" "$message"
+}
+
 # Define usage function
 show_usage() {
-    cat << EOF
-Usage: $(basename "$0") [OPTIONS]
-
-Options:
-  -d, --datacenter DATACENTER  Specify the datacenter name
-  -s, --servers SERVER_LIST    Specify servers to process (comma-separated numbers or "all")
-  -h, --help                   Show this help message
-
-Examples:
-  $(basename "$0")                          # Run in interactive mode
-  $(basename "$0") -d cloudzy -s all        # Process all cloudzy servers
-  $(basename "$0") -d arvan -s 1,3,5        # Process 1st, 3rd, and 5th arvan servers
-  $(basename "$0") --datacenter azma --servers 2,4    # Process 2nd and 4th azma servers
-
-EOF
+    echo ""
+    echo -e "${BLUE}${BOLD}$(basename "$0")${RESET} - Server Configuration Tool"
+    echo -e "${GRAY}$(printf '%.0s─' $(seq 1 50))${RESET}"
+    echo ""
+    echo -e "${BOLD}Usage:${RESET}"
+    echo -e "  $(basename "$0") [OPTIONS]"
+    echo ""
+    echo -e "${BOLD}Options:${RESET}"
+    echo -e "  ${CYAN}-d, --datacenter ${ITALIC}DATACENTER${RESET}  Specify the datacenter name"
+    echo -e "  ${CYAN}-s, --servers ${ITALIC}SERVER_LIST${RESET}    Specify servers to process (comma-separated numbers or \"all\")"
+    echo -e "  ${CYAN}-h, --help${RESET}                   Show this help message"
+    echo ""
+    echo -e "${BOLD}Examples:${RESET}"
+    echo -e "  ${GRAY}$(basename "$0")${RESET}                          # Run in interactive mode"
+    echo -e "  ${GRAY}$(basename "$0") -d cloudzy -s all${RESET}        # Process all cloudzy servers"
+    echo -e "  ${GRAY}$(basename "$0") -d arvan -s 1,3,5${RESET}        # Process 1st, 3rd, and 5th arvan servers"
+    echo -e "  ${GRAY}$(basename "$0") --datacenter azma --servers 2,4${RESET}    # Process 2nd and 4th azma servers"
+    echo ""
     exit 0
 }
 
@@ -55,7 +92,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            echo "Unknown option: $1"
+            echo -e "${RED}Unknown option: $1${RESET}"
             show_usage
             ;;
     esac
@@ -63,7 +100,7 @@ done
 
 # Check if servers.conf exists
 if [ ! -f "$SERVERS_CONF" ]; then
-    echo "Error: servers.conf file not found at $SERVERS_CONF"
+    echo -e "${RED}Error: servers.conf file not found at $SERVERS_CONF${RESET}"
     exit 1
 fi
 
@@ -73,14 +110,18 @@ datacenters=($(awk -F'|' '{ print $1 }' "$SERVERS_CONF" | sort -u))
 # Datacenter selection
 if [ -z "$DATACENTER" ]; then
     # Interactive mode - prompt for datacenter
-    echo "Available datacenters:"
+    print_header "Datacenter Selection"
+    echo -e "${BOLD}Available datacenters:${RESET}"
+    echo ""
+    
     for i in "${!datacenters[@]}"; do
-        echo "$((i+1)). ${datacenters[$i]}"
+        echo -e "  ${CYAN}${BOLD}$((i+1))${RESET} ${GRAY}•${RESET} ${datacenters[$i]}"
     done
-
-    read -p "Select datacenter (1-${#datacenters[@]}): " dc_choice
+    
+    echo ""
+    read -p "$(echo -e "${BLUE}Select datacenter ${RESET}[1-${#datacenters[@]}]${BLUE}: ${RESET}")" dc_choice
     if ! [[ "$dc_choice" =~ ^[0-9]+$ ]] || [ "$dc_choice" -lt 1 ] || [ "$dc_choice" -gt "${#datacenters[@]}" ]; then
-        echo "Invalid selection. Exiting."
+        echo -e "${RED}Invalid selection. Exiting.${RESET}"
         exit 1
     fi
     SELECTED_DC="${datacenters[$((dc_choice-1))]}"
@@ -95,13 +136,14 @@ else
     done
     
     if [ -z "$SELECTED_DC" ]; then
-        echo "Error: Datacenter '$DATACENTER' not found in servers.conf"
-        echo "Available datacenters: ${datacenters[*]}"
+        echo -e "${RED}Error: Datacenter '$DATACENTER' not found in servers.conf${RESET}"
+        echo -e "${GRAY}Available datacenters: ${RESET}${datacenters[*]}"
         exit 1
     fi
 fi
 
-echo "Selected datacenter: $SELECTED_DC"
+echo ""
+echo -e "${BOLD}${GREEN}✓ Selected datacenter: ${RESET}${BLUE}$SELECTED_DC${RESET}"
 
 # Get servers for selected datacenter
 servers=($(awk -F'|' -v dc="$SELECTED_DC" '$1 == dc { print $2 }' "$SERVERS_CONF"))
@@ -111,13 +153,17 @@ selected_indices=()
 
 if [ -z "$SERVERS" ]; then
     # Interactive mode - prompt for servers
-    echo "Available VMs in $SELECTED_DC datacenter:"
-    for i in "${!servers[@]}"; do
-        echo "$((i+1)). ${servers[$i]}"
-    done
-    echo "$((${#servers[@]}+1)). all"
+    print_header "Server Selection"
+    echo -e "${BOLD}Available VMs in ${BLUE}$SELECTED_DC${RESET} datacenter:${RESET}"
+    echo ""
     
-    read -p "Choose destination VM(s) (e.g., 246 for multiple or '${#servers[@]}+1' for all): " server_choice
+    for i in "${!servers[@]}"; do
+        echo -e "  ${CYAN}${BOLD}$((i+1))${RESET} ${GRAY}•${RESET} ${servers[$i]}"
+    done
+    echo -e "  ${CYAN}${BOLD}$((${#servers[@]}+1))${RESET} ${GRAY}•${RESET} all"
+    
+    echo ""
+    read -p "$(echo -e "${BLUE}Choose destination VM(s) ${RESET}(e.g., 246 for multiple or '${#servers[@]}+1' for all)${BLUE}: ${RESET}")" server_choice
     
     # Process interactive selection
     if [ "$server_choice" == "$((${#servers[@]}+1))" ] || [ "$server_choice" == "all" ]; then
@@ -148,7 +194,7 @@ else
             if [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -ge 1 ] && [ "$num" -le "${#servers[@]}" ]; then
                 selected_indices+=($((num-1)))
             else
-                echo "Warning: Invalid server number '$num' - skipping"
+                echo -e "${YELLOW}Warning: Invalid server number '$num' - skipping${RESET}"
             fi
         done
     fi
@@ -156,14 +202,15 @@ fi
 
 # Check if at least one server was selected
 if [ ${#selected_indices[@]} -eq 0 ]; then
-    echo "No valid servers selected. Exiting."
+    echo -e "${RED}No valid servers selected. Exiting.${RESET}"
     exit 1
 fi
 
 # Display selected servers
-echo "Selected servers:"
+print_header "Operation Summary"
+echo -e "${BOLD}Selected servers:${RESET}"
 for idx in "${selected_indices[@]}"; do
-    echo "- ${servers[$idx]}"
+    echo -e "  ${GREEN}•${RESET} ${servers[$idx]}"
 done
 
 # Create temporary directory for SSH control sockets
@@ -311,7 +358,7 @@ process_server() {
         ssh $SSH_OPTS -o ControlPath="$SSH_CONTROL" -O exit "${DEST_USER}@${DEST_IP}" >> "$LOG_FILE" 2>&1
         
         echo "$(date '+%Y-%m-%d %H:%M:%S') Completed processing for $SELECTED_SERVER" >> "$LOG_FILE"
-        echo "✓ Completed: $SELECTED_SERVER" # Output to main console
+        echo -e "${GREEN}✓${RESET} Completed: ${BLUE}$SELECTED_SERVER${RESET}" # Output to main console
     } &
     
     # Store the PID for monitoring
@@ -323,17 +370,21 @@ rm -f "$TEMP_DIR/pids"
 touch "$TEMP_DIR/pids"
 
 # Process servers in parallel, but limit concurrency
-echo "Processing servers in parallel (max $MAX_PARALLEL at once)..."
+echo -e "${GRAY}$(printf '%.0s─' $(seq 1 50))${RESET}"
+echo -e "${BOLD}Processing servers in parallel ${GRAY}(max $MAX_PARALLEL at once)${RESET}..."
+echo -e "${GRAY}$(printf '%.0s─' $(seq 1 50))${RESET}"
+
 active_jobs=0
 for idx in "${selected_indices[@]}"; do
     # Check if we're at max capacity
     while [ $(jobs -r | wc -l) -ge $MAX_PARALLEL ]; do
-        # Wait for any job to finish
+        # Show a simple spinner while waiting
+        echo -ne "${GRAY}Waiting for available slot...${RESET}\r"
         sleep 0.5
     done
     
     # Start processing this server
-    echo "Starting: ${servers[$idx]}"
+    echo -e "${CYAN}⟳${RESET} Starting: ${BLUE}${servers[$idx]}${RESET}"
     process_server $idx
     
     # Brief pause to prevent race conditions
@@ -341,26 +392,52 @@ for idx in "${selected_indices[@]}"; do
 done
 
 # Wait for all background processes to complete
-echo "Waiting for all processes to complete..."
-wait $(cat "$TEMP_DIR/pids")
+echo -e "\n${BOLD}Waiting for all processes to complete...${RESET}"
+
+# Simple spinner while waiting for background processes
+spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+i=0
+while [ $(jobs -r | wc -l) -gt 0 ]; do
+    echo -ne "\r${CYAN}${spin[$i]}${RESET} ${GRAY}Completing remaining tasks...${RESET}"
+    i=$(( (i+1) % 10 ))
+    sleep 0.1
+done
+echo -e "\r${GREEN}✓${RESET} ${BOLD}All tasks completed${RESET}      "
 
 # Display final results
-echo ""
-echo "==============================================="
-echo "All operations completed for selected servers."
-echo "==============================================="
+print_header "Operation Complete"
+echo -e "${BOLD}${GREEN}✓ All operations completed for selected servers.${RESET}"
 
 # Output logs from all servers
-echo "Summary of operations:"
+print_header "Operation Summary"
 for idx in "${selected_indices[@]}"; do
     SERVER="${servers[$idx]}"
+    echo -e "${BOLD}${BLUE}$SERVER${RESET}"
+    echo -e "${GRAY}$(printf '%.0s─' $(seq 1 30))${RESET}"
+    
+    # Parse the log to extract network type and proxy setting
+    NETWORK_TYPE=$(grep "Network type" "$TEMP_DIR/$SERVER.log" | tail -1 | awk -F': ' '{print $2}')
+    PROXY_SETTING=$(grep "Setting proxy" "$TEMP_DIR/$SERVER.log" | tail -1 | awk -F': ' '{print $2}')
+    
+    if [ "$NETWORK_TYPE" = "internal" ]; then
+        echo -e "  ${GRAY}Network:${RESET} ${CYAN}Internal${RESET}"
+    else
+        echo -e "  ${GRAY}Network:${RESET} ${BLUE}External${RESET}"
+    fi
+    
+    if [ "$PROXY_SETTING" = "true" ]; then
+        echo -e "  ${GRAY}Proxy:${RESET}   ${GREEN}Enabled${RESET}"
+    else
+        echo -e "  ${GRAY}Proxy:${RESET}   ${YELLOW}Disabled${RESET}"
+    fi
+    
+    echo -e "  ${GRAY}Status:${RESET}  ${GREEN}Completed${RESET}"
     echo ""
-    echo "--- Summary for $SERVER ---"
-    grep -E "Network type|Setting proxy|Completed processing" "$TEMP_DIR/$SERVER.log"
 done
 
 echo ""
-echo "NOTE: For the environment variables to be fully available in all new sessions, users may need to log out and log back in."
+echo -e "${GRAY}NOTE: For the environment variables to be fully available in all new sessions,${RESET}"
+echo -e "${GRAY}users may need to log out and log back in.${RESET}"
 
 # Clean up
 rm -rf "$TEMP_DIR"
